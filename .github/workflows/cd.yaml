@@ -76,7 +76,10 @@ jobs:
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
             GIT_COMMIT=${{ github.sha }}
-            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp || github.event.repository.pushed_at || github.event.repository.updated_at }}
+          file: ./Dockerfile
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           cache-from: type=gha
           cache-to: type=gha,mode=max
         outputs:
@@ -142,8 +145,14 @@ jobs:
       # Update Chart.yaml with version
       - name: Update Chart version
         run: |
-          sed -i "s/^version:.*/version: ${{ steps.version.outputs.version }}/" chart/dm-nkp-gitops-a2a-server/Chart.yaml
-          sed -i "s/^appVersion:.*/appVersion: \"${{ steps.version.outputs.version }}\"/" chart/dm-nkp-gitops-a2a-server/Chart.yaml
+          if [ -f "chart/dm-nkp-gitops-a2a-server/Chart.yaml" ]; then
+            sed -i "s/^version:.*/version: ${{ steps.version.outputs.version }}/" chart/dm-nkp-gitops-a2a-server/Chart.yaml
+            sed -i "s/^appVersion:.*/appVersion: \"${{ steps.version.outputs.version }}\"/" chart/dm-nkp-gitops-a2a-server/Chart.yaml
+            echo "✅ Chart.yaml updated to version ${{ steps.version.outputs.version }}"
+          else
+            echo "❌ Chart.yaml not found at chart/dm-nkp-gitops-a2a-server/Chart.yaml"
+            exit 1
+          fi
       
       # Package Helm chart
       - name: Package Helm chart
@@ -166,10 +175,15 @@ jobs:
         env:
           CHART_PATH: .helm-packages/dm-nkp-gitops-a2a-server-${{ steps.version.outputs.version }}.tgz
         run: |
+          if [ ! -f "${CHART_PATH}" ]; then
+            echo "❌ Chart file not found: ${CHART_PATH}"
+            exit 1
+          fi
           echo "Signing Helm chart: ${CHART_PATH}"
           cosign sign-blob --yes ${CHART_PATH} \
             --output-signature ${CHART_PATH}.sig \
             --output-certificate ${CHART_PATH}.pem
+          echo "✅ Chart signed successfully"
       
       # Upload signed chart artifacts
       - name: Upload signed chart artifacts
