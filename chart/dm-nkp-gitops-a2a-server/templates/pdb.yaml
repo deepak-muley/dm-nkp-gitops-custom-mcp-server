@@ -1,0 +1,13 @@
+{{- if .Values.mcpServer.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "dm-nkp-gitops-a2a-server.fullname" . }}
+  labels:
+    {{- include "dm-nkp-gitops-a2a-server.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.mcpServer.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "dm-nkp-gitops-a2a-server.selectorLabels" . | nindent 6 }}
+{{- end }}

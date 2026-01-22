@@ -1,0 +1,265 @@
+# Default values for dm-nkp-gitops-a2a-server
+# This is a YAML-formatted file.
+
+# =============================================================================
+# DEPLOYMENT MODE
+# =============================================================================
+# Choose how to deploy the MCP/A2A server:
+# - "deployment": Traditional Kubernetes Deployment + Service (works everywhere)
+# - "mcpserver": Kagent MCPServer CRD (K8s-native, requires Kagent operator)
+#
+# Enterprise recommendation: Use "mcpserver" if Kagent is installed, otherwise "deployment"
+# -- Deployment mode: "deployment" or "mcpserver"
+deploymentMode: "deployment"
+
+# -- Number of replicas
+replicaCount: 1
+
+image:
+  # -- Container image repository
+  repository: ghcr.io/deepak-muley/dm-nkp-gitops-a2a-server
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+  # -- Overrides the image tag (default is the chart appVersion)
+  tag: ""
+
+# -- Image pull secrets for private registries
+imagePullSecrets: []
+
+# -- Override the name of the chart
+nameOverride: ""
+
+# -- Override the full name of the chart
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Specifies whether a service account should be created
+  create: true
+  # -- Annotations to add to the service account
+  annotations: {}
+  # -- The name of the service account to use
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+rbac:
+  # -- Specifies whether RBAC resources should be created
+  create: true
+
+# -- Annotations to add to the pod
+podAnnotations: {}
+
+# -- Labels to add to the pod
+podLabels: {}
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  # -- Service type
+  type: ClusterIP
+  # -- Service port
+  port: 8080
+  # -- Target port on the container
+  targetPort: 8080
+  # -- Annotations to add to the service
+  annotations: {}
+
+# Gateway API HTTPRoute configuration
+httpRoute:
+  # -- Enable HTTPRoute for Gateway API
+  enabled: true
+  # -- Hostname for the HTTPRoute
+  # For local testing with nip.io: gitops-agent.<NODE_IP>.nip.io
+  # For production: gitops-agent.example.com
+  hostname: "gitops-agent.example.com"
+  # -- Parent gateway reference
+  parentRefs:
+    - name: traefik-gateway
+      namespace: traefik-system
+  # -- Annotations for the HTTPRoute
+  annotations: {}
+
+# TLS configuration with cert-manager
+tls:
+  # -- Enable TLS
+  enabled: true
+  # -- Name of the TLS secret (auto-generated if using cert-manager)
+  secretName: ""
+  # -- ClusterIssuer name for cert-manager
+  clusterIssuer: "letsencrypt-prod"
+  # -- Create a ClusterIssuer (only for local testing, set to false for NKP)
+  createClusterIssuer: false
+  # -- Let's Encrypt server URL (use staging for testing)
+  # Production: https://acme-v02.api.letsencrypt.org/directory
+  # Staging: https://acme-staging-v02.api.letsencrypt.org/directory
+  acmeServer: "https://acme-v02.api.letsencrypt.org/directory"
+  # -- Email for Let's Encrypt notifications
+  acmeEmail: ""
+  # -- Use self-signed issuer for local testing
+  selfSigned: false
+
+# Resource limits and requests
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+# -- Node selector for pod assignment
+nodeSelector: {}
+
+# -- Tolerations for pod assignment
+tolerations: []
+
+# -- Affinity rules for pod assignment
+affinity: {}
+
+# A2A server configuration
+a2a:
+  # -- Server port
+  port: 8080
+  # -- Enable read-only mode (recommended for production)
+  readOnly: true
+  # -- Log level: debug, info, warn, error
+  logLevel: "info"
+  # -- Base URL for agent card (auto-generated from hostname if empty)
+  baseURL: ""
+
+# Liveness probe configuration
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# Readiness probe configuration
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# -- Extra environment variables to pass to the container
+extraEnv: []
+  # - name: KUBECONFIG
+  #   value: /etc/kubeconfig/config
+
+# -- Extra volume mounts for the container
+extraVolumeMounts: []
+
+# -- Extra volumes for the pod
+extraVolumes: []
+
+# =============================================================================
+# MCPSERVER CRD CONFIGURATION (only used when deploymentMode: "mcpserver")
+# =============================================================================
+# These settings are specific to Kagent MCPServer CRD deployment mode.
+# Requires: Kagent operator installed in the cluster
+# Install: kubectl apply -f https://github.com/kagent-dev/kagent/releases/latest/download/install.yaml
+mcpServer:
+  # -- Annotations for the MCPServer resource
+  annotations: {}
+  
+  # A2A (Agent-to-Agent) protocol configuration
+  a2a:
+    # -- Enable A2A protocol support in MCPServer
+    enabled: true
+    # -- Agent card configuration (auto-generated if not specified)
+    agentCard: {}
+      # name: "NKP GitOps Agent"
+      # description: "Agent for monitoring NKP GitOps infrastructure"
+      # version: "0.1.0"
+      # skills:
+      #   - name: "gitops-monitoring"
+      #     description: "Monitor Flux CD, CAPI, and Kommander resources"
+  
+  # Prometheus metrics configuration
+  metrics:
+    # -- Enable Prometheus metrics endpoint
+    enabled: true
+    # -- Metrics port
+    port: 9090
+    # -- Metrics path
+    path: /metrics
+  
+  # Distributed tracing configuration (OpenTelemetry)
+  tracing:
+    # -- Enable distributed tracing
+    enabled: false
+    # -- OTLP endpoint for traces
+    endpoint: ""
+  
+  # PodDisruptionBudget for HA
+  pdb:
+    # -- Enable PodDisruptionBudget
+    enabled: false
+    # -- Minimum available pods
+    minAvailable: 1
+  
+  # Horizontal Pod Autoscaler
+  autoscaling:
+    # -- Enable HPA
+    enabled: false
+    # -- Minimum replicas
+    minReplicas: 1
+    # -- Maximum replicas
+    maxReplicas: 3
+    # -- Target CPU utilization percentage
+    targetCPUUtilizationPercentage: 80
+    # -- Target memory utilization percentage
+    targetMemoryUtilizationPercentage: 80
+
+# =============================================================================
+# ENTERPRISE HARDENING
+# =============================================================================
+# Additional enterprise-grade security and compliance settings
+
+# Network policy configuration
+networkPolicy:
+  # -- Enable network policy
+  enabled: false
+  # -- Allowed ingress sources (for mTLS/zero-trust)
+  ingressFrom: []
+    # - namespaceSelector:
+    #     matchLabels:
+    #       name: ai-agents
+  # -- Allowed egress destinations
+  egressTo:
+    # Allow access to Kubernetes API
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+
+# Pod topology spread constraints for HA
+topologySpreadConstraints: []
+  # - maxSkew: 1
+  #   topologyKey: topology.kubernetes.io/zone
+  #   whenUnsatisfiable: DoNotSchedule
+  #   labelSelector:
+  #     matchLabels:
+  #       app.kubernetes.io/name: dm-nkp-gitops-a2a-server

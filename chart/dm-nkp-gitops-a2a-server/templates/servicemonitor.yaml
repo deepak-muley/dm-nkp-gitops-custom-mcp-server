@@ -1,0 +1,21 @@
+{{- if and .Values.mcpServer.metrics.enabled (eq .Values.deploymentMode "deployment") }}
+# ServiceMonitor for Prometheus Operator
+# Only needed for traditional deployment mode; MCPServer CRD handles this automatically
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "dm-nkp-gitops-a2a-server.fullname" . }}
+  labels:
+    {{- include "dm-nkp-gitops-a2a-server.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "dm-nkp-gitops-a2a-server.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: {{ .Values.mcpServer.metrics.path }}
+      interval: 30s
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+{{- end }}

@@ -1,0 +1,16 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "dm-nkp-gitops-a2a-server.fullname" . }}
+  labels:
+    {{- include "dm-nkp-gitops-a2a-server.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "dm-nkp-gitops-a2a-server.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dm-nkp-gitops-a2a-server.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

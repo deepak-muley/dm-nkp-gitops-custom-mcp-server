@@ -1,0 +1,42 @@
+apiVersion: v2
+name: dm-nkp-gitops-a2a-server
+description: A2A (Agent-to-Agent) and MCP server for NKP GitOps infrastructure monitoring and debugging
+type: application
+version: 0.2.0
+appVersion: "0.2.0"
+
+keywords:
+  - a2a
+  - mcp
+  - gitops
+  - flux
+  - kubernetes
+  - nkp
+  - monitoring
+  - kagent
+  - mcpserver
+
+home: https://github.com/deepak-muley/dm-nkp-gitops-custom-mcp-server
+
+sources:
+  - https://github.com/deepak-muley/dm-nkp-gitops-custom-mcp-server
+
+maintainers:
+  - name: Deepak Muley
+    url: https://github.com/deepak-muley
+
+annotations:
+  category: Monitoring
+  licenses: MIT
+  # Enterprise deployment modes
+  artifacthub.io/containsSecurityUpdates: "false"
+  artifacthub.io/changes: |
+    - kind: added
+      description: MCPServer CRD support for K8s-native deployment via Kagent
+    - kind: added
+      description: Enterprise hardening (PDB, NetworkPolicy, HPA, ServiceMonitor)
+    - kind: added
+      description: Dual deployment mode (deployment vs mcpserver)
+  artifacthub.io/recommendations: |
+    - url: https://kagent.dev
+      description: Kagent - CNCF Sandbox project for K8s-native MCP servers

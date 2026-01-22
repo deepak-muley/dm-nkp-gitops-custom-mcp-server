@@ -1,0 +1,174 @@
+# Enterprise Production Values for dm-nkp-gitops-a2a-server
+# Use with: helm install ... -f values-enterprise.yaml
+#
+# Prerequisites for MCPServer mode:
+#   kubectl apply -f https://github.com/kagent-dev/kagent/releases/latest/download/install.yaml
+
+# =============================================================================
+# DEPLOYMENT MODE: K8s-Native with Kagent
+# =============================================================================
+deploymentMode: "mcpserver"
+
+# High availability
+replicaCount: 2
+
+# Production image settings
+image:
+  repository: ghcr.io/deepak-muley/dm-nkp-gitops-a2a-server
+  pullPolicy: Always
+  tag: "0.2.0"
+
+# =============================================================================
+# SECURITY HARDENING
+# =============================================================================
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# =============================================================================
+# PRODUCTION RESOURCES
+# =============================================================================
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# =============================================================================
+# HIGH AVAILABILITY
+# =============================================================================
+# Pod anti-affinity for spread across nodes
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: dm-nkp-gitops-a2a-server
+          topologyKey: kubernetes.io/hostname
+
+# Topology spread across zones
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: dm-nkp-gitops-a2a-server
+
+# =============================================================================
+# A2A SERVER CONFIGURATION
+# =============================================================================
+a2a:
+  port: 8080
+  readOnly: true  # CRITICAL: Production must be read-only
+  logLevel: "info"
+
+# =============================================================================
+# MCPSERVER CRD CONFIGURATION
+# =============================================================================
+mcpServer:
+  annotations:
+    # Add Datadog/Dynatrace annotations if needed
+    # ad.datadoghq.com/dm-nkp-gitops-a2a-server.logs: '[{"source":"go","service":"gitops-agent"}]'
+    
+  a2a:
+    enabled: true
+    agentCard:
+      name: "NKP GitOps Agent"
+      description: "Production agent for monitoring NKP GitOps infrastructure"
+      version: "0.2.0"
+      skills:
+        - name: "flux-monitoring"
+          description: "Monitor Flux CD Kustomizations, GitRepositories, HelmReleases"
+        - name: "capi-monitoring"
+          description: "Monitor Cluster API clusters and machines"
+        - name: "policy-compliance"
+          description: "Check Gatekeeper/Kyverno policy violations"
+  
+  # Prometheus metrics
+  metrics:
+    enabled: true
+    port: 9090
+    path: /metrics
+  
+  # OpenTelemetry tracing (configure endpoint for your APM)
+  tracing:
+    enabled: false
+    endpoint: ""  # e.g., "http://otel-collector.monitoring:4317"
+  
+  # Pod Disruption Budget for zero-downtime updates
+  pdb:
+    enabled: true
+    minAvailable: 1
+  
+  # Horizontal Pod Autoscaler
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+# =============================================================================
+# NETWORK SECURITY (Zero Trust)
+# =============================================================================
+networkPolicy:
+  enabled: true
+  # Only allow traffic from AI agent namespaces
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          purpose: ai-agents
+    - namespaceSelector:
+        matchLabels:
+          name: kommander
+
+# =============================================================================
+# TLS CONFIGURATION
+# =============================================================================
+tls:
+  enabled: true
+  clusterIssuer: "letsencrypt-prod"
+  createClusterIssuer: false
+  acmeServer: "https://acme-v02.api.letsencrypt.org/directory"
+
+# =============================================================================
+# GATEWAY API / INGRESS
+# =============================================================================
+httpRoute:
+  enabled: true
+  hostname: "gitops-agent.your-domain.com"  # CHANGE THIS
+  parentRefs:
+    - name: production-gateway
+      namespace: gateway-system
+  annotations:
+    # Rate limiting
+    konghq.com/plugins: rate-limiting-production
+
+# =============================================================================
+# OBSERVABILITY LABELS
+# =============================================================================
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9090"
+  prometheus.io/path: "/metrics"
+
+podLabels:
+  app.kubernetes.io/part-of: gitops-monitoring
+  app.kubernetes.io/managed-by: helm
+  environment: production

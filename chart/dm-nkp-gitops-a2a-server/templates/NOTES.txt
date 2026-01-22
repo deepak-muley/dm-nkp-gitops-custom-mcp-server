@@ -1,0 +1,156 @@
+
+================================================================================
+  dm-nkp-gitops-a2a-server has been installed!
+================================================================================
+
+Deployment Mode: {{ .Values.deploymentMode | upper }}
+{{- if eq .Values.deploymentMode "mcpserver" }}
+  Using Kagent MCPServer CRD (K8s-native)
+  Prerequisite: Kagent operator must be installed
+{{- else }}
+  Using traditional Kubernetes Deployment
+{{- end }}
+
+1. Get the application URL:
+{{- if .Values.httpRoute.enabled }}
+{{- if .Values.tls.enabled }}
+   https://{{ .Values.httpRoute.hostname }}
+{{- else }}
+   http://{{ .Values.httpRoute.hostname }}
+{{- end }}
+{{- else }}
+   kubectl port-forward svc/{{ include "dm-nkp-gitops-a2a-server.fullname" . }} 8080:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+   Then access: http://localhost:8080
+{{- end }}
+
+2. Test the endpoints:
+
+   # Health check
+{{- if .Values.httpRoute.enabled }}
+{{- if .Values.tls.enabled }}
+   curl -k https://{{ .Values.httpRoute.hostname }}/health
+{{- else }}
+   curl http://{{ .Values.httpRoute.hostname }}/health
+{{- end }}
+{{- else }}
+   curl http://localhost:8080/health
+{{- end }}
+
+   # Agent Card (discovery)
+{{- if .Values.httpRoute.enabled }}
+{{- if .Values.tls.enabled }}
+   curl -k https://{{ .Values.httpRoute.hostname }}/.well-known/agent.json | jq
+{{- else }}
+   curl http://{{ .Values.httpRoute.hostname }}/.well-known/agent.json | jq
+{{- end }}
+{{- else }}
+   curl http://localhost:8080/.well-known/agent.json | jq
+{{- end }}
+
+   # Create a task (execute a skill)
+{{- if .Values.httpRoute.enabled }}
+{{- if .Values.tls.enabled }}
+   curl -k -X POST https://{{ .Values.httpRoute.hostname }}/ \
+{{- else }}
+   curl -X POST http://{{ .Values.httpRoute.hostname }}/ \
+{{- end }}
+{{- else }}
+   curl -X POST http://localhost:8080/ \
+{{- end }}
+     -H "Content-Type: application/json" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 1,
+       "method": "tasks/create",
+       "params": {
+         "skill": "get-gitops-status",
+         "input": {}
+       }
+     }' | jq
+
+3. Available Skills (A2A):
+   - get-gitops-status: Get overall GitOps health summary
+   - list-kustomizations: List Flux Kustomizations
+   - get-kustomization: Get specific Kustomization details
+   - list-gitrepositories: List GitRepository sources
+   - get-cluster-status: Get CAPI cluster status
+   - list-machines: List CAPI machines
+   - get-app-deployments: Get Kommander app deployment status
+   - get-helmreleases: List HelmReleases
+   - debug-reconciliation: Debug failing reconciliation
+   - get-events: Get Kubernetes events
+   - get-pod-logs: Get pod logs
+   - check-policy-violations: Check policy violations
+   - list-constraints: List Gatekeeper constraints
+
+{{- if .Values.tls.enabled }}
+
+4. TLS Certificate:
+   {{- if .Values.tls.selfSigned }}
+   Using self-signed certificate (for testing only)
+   {{- else }}
+   Using ClusterIssuer: {{ .Values.tls.clusterIssuer }}
+   {{- end }}
+   
+   Check certificate status:
+   kubectl get certificate {{ include "dm-nkp-gitops-a2a-server.fullname" . }}-tls -n {{ .Release.Namespace }}
+{{- end }}
+
+5. View logs:
+   kubectl logs -l app.kubernetes.io/name={{ include "dm-nkp-gitops-a2a-server.name" . }} -n {{ .Release.Namespace }} -f
+
+{{- if eq .Values.deploymentMode "mcpserver" }}
+
+6. MCPServer CRD Status:
+   kubectl get mcpserver {{ include "dm-nkp-gitops-a2a-server.fullname" . }} -n {{ .Release.Namespace }}
+   kubectl describe mcpserver {{ include "dm-nkp-gitops-a2a-server.fullname" . }} -n {{ .Release.Namespace }}
+{{- end }}
+
+{{- if .Values.mcpServer.autoscaling.enabled }}
+
+7. HPA Status:
+   kubectl get hpa {{ include "dm-nkp-gitops-a2a-server.fullname" . }} -n {{ .Release.Namespace }}
+{{- end }}
+
+{{- if eq .Values.deploymentMode "mcpserver" }}
+
+6. MCPServer CRD Resources:
+   # Check MCPServer status
+   kubectl get mcpserver {{ include "dm-nkp-gitops-a2a-server.fullname" . }} -n {{ .Release.Namespace }} -o yaml
+   
+   # View managed resources
+   kubectl get all -l app.kubernetes.io/instance={{ .Release.Name }} -n {{ .Release.Namespace }}
+{{- end }}
+
+{{- if .Values.mcpServer.autoscaling.enabled }}
+
+7. Autoscaling:
+   HPA enabled with {{ .Values.mcpServer.autoscaling.minReplicas }}-{{ .Values.mcpServer.autoscaling.maxReplicas }} replicas
+   kubectl get hpa {{ include "dm-nkp-gitops-a2a-server.fullname" . }} -n {{ .Release.Namespace }}
+{{- end }}
+
+{{- if .Values.networkPolicy.enabled }}
+
+8. Network Policy:
+   Zero-trust network policy is enabled
+   kubectl get networkpolicy {{ include "dm-nkp-gitops-a2a-server.fullname" . }} -n {{ .Release.Namespace }}
+{{- end }}
+
+For more information, see:
+- Documentation: https://github.com/deepak-muley/dm-nkp-gitops-custom-mcp-server
+- A2A Protocol: docs/A2A_PROTOCOL.md
+- Enterprise Values: chart/dm-nkp-gitops-a2a-server/values-enterprise.yaml
+- Kagent: https://kagent.dev
+- Kagent (K8s-native MCP): https://kagent.dev
+
+================================================================================
+  Enterprise Deployment Recommendation
+================================================================================
+For production, use MCPServer mode with enterprise values:
+
+  helm upgrade --install gitops-agent ./chart/dm-nkp-gitops-a2a-server \
+    -f ./chart/dm-nkp-gitops-a2a-server/values-enterprise.yaml \
+    --namespace gitops-agent --create-namespace
+
+Prerequisites:
+  kubectl apply -f https://github.com/kagent-dev/kagent/releases/latest/download/install.yaml

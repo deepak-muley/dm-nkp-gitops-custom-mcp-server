@@ -1,0 +1,40 @@
+{{- if and .Values.tls.enabled .Values.tls.createClusterIssuer -}}
+{{- if .Values.tls.selfSigned }}
+# Self-signed Issuer for local testing
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "dm-nkp-gitops-a2a-server.fullname" . }}-selfsigned
+  labels:
+    {{- include "dm-nkp-gitops-a2a-server.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+{{- else }}
+# Let's Encrypt ClusterIssuer with HTTP-01 challenge
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ .Values.tls.clusterIssuer }}
+  labels:
+    {{- include "dm-nkp-gitops-a2a-server.labels" . | nindent 4 }}
+spec:
+  acme:
+    # ACME server URL
+    server: {{ .Values.tls.acmeServer }}
+    # Email address for ACME registration
+    {{- if .Values.tls.acmeEmail }}
+    email: {{ .Values.tls.acmeEmail }}
+    {{- else }}
+    email: admin@example.com
+    {{- end }}
+    # Name of a secret to store the ACME account private key
+    privateKeySecretRef:
+      name: {{ .Values.tls.clusterIssuer }}-account-key
+    # HTTP-01 challenge solver
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              {{- toYaml .Values.httpRoute.parentRefs | nindent 14 }}
+{{- end }}
+{{- end }}

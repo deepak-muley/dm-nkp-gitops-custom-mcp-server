@@ -1,0 +1,129 @@
+{{- if eq .Values.deploymentMode "mcpserver" }}
+# MCPServer CRD - K8s-native deployment via Kagent operator
+# Requires: kubectl apply -f https://github.com/kagent-dev/kagent/releases/latest/download/install.yaml
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: {{ include "dm-nkp-gitops-a2a-server.fullname" . }}
+  labels:
+    {{- include "dm-nkp-gitops-a2a-server.labels" . | nindent 4 }}
+  {{- with .Values.mcpServer.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # Container image - same Go binary
+  image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+  imagePullPolicy: {{ .Values.image.pullPolicy }}
+  
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  
+  # Replicas for HA
+  replicas: {{ .Values.replicaCount }}
+  
+  # Service account for K8s API access
+  serviceAccountName: {{ include "dm-nkp-gitops-a2a-server.serviceAccountName" . }}
+  
+  # Container args
+  args:
+    - serve
+    - --port={{ .Values.a2a.port }}
+    - --log-level={{ .Values.a2a.logLevel }}
+    {{- if .Values.a2a.readOnly }}
+    - --read-only
+    {{- end }}
+    {{- if .Values.a2a.baseURL }}
+    - --base-url={{ .Values.a2a.baseURL }}
+    {{- else if .Values.httpRoute.enabled }}
+    - --base-url={{ include "dm-nkp-gitops-a2a-server.baseURL" . }}
+    {{- end }}
+  
+  # Port configuration
+  ports:
+    - name: http
+      containerPort: {{ .Values.a2a.port }}
+      protocol: TCP
+  
+  # Resource limits (enterprise-grade)
+  resources:
+    {{- toYaml .Values.resources | nindent 4 }}
+  
+  # Environment variables
+  env:
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+    {{- with .Values.extraEnv }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  
+  # Probes
+  livenessProbe:
+    {{- toYaml .Values.livenessProbe | nindent 4 }}
+  
+  readinessProbe:
+    {{- toYaml .Values.readinessProbe | nindent 4 }}
+  
+  # Security context (enterprise hardening)
+  podSecurityContext:
+    {{- toYaml .Values.podSecurityContext | nindent 4 }}
+  
+  securityContext:
+    {{- toYaml .Values.securityContext | nindent 4 }}
+  
+  {{- with .Values.extraVolumeMounts }}
+  volumeMounts:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  
+  {{- with .Values.extraVolumes }}
+  volumes:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  
+  {{- with .Values.nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  
+  {{- with .Values.affinity }}
+  affinity:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  
+  {{- with .Values.tolerations }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  
+  # MCPServer specific configuration
+  {{- if .Values.mcpServer.a2a.enabled }}
+  a2a:
+    enabled: true
+    {{- if .Values.mcpServer.a2a.agentCard }}
+    agentCard:
+      {{- toYaml .Values.mcpServer.a2a.agentCard | nindent 6 }}
+    {{- end }}
+  {{- end }}
+  
+  {{- if .Values.mcpServer.metrics.enabled }}
+  metrics:
+    enabled: true
+    port: {{ .Values.mcpServer.metrics.port }}
+    path: {{ .Values.mcpServer.metrics.path }}
+  {{- end }}
+  
+  {{- if .Values.mcpServer.tracing.enabled }}
+  tracing:
+    enabled: true
+    endpoint: {{ .Values.mcpServer.tracing.endpoint }}
+  {{- end }}
+{{- end }}

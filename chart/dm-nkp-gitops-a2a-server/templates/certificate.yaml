@@ -1,0 +1,26 @@
+{{- if and .Values.tls.enabled .Values.httpRoute.enabled -}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "dm-nkp-gitops-a2a-server.fullname" . }}-tls
+  labels:
+    {{- include "dm-nkp-gitops-a2a-server.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "dm-nkp-gitops-a2a-server.tlsSecretName" . }}
+  {{- if .Values.tls.selfSigned }}
+  issuerRef:
+    name: {{ include "dm-nkp-gitops-a2a-server.fullname" . }}-selfsigned
+    kind: Issuer
+  {{- else }}
+  issuerRef:
+    name: {{ .Values.tls.clusterIssuer }}
+    kind: ClusterIssuer
+  {{- end }}
+  dnsNames:
+    - {{ .Values.httpRoute.hostname | quote }}
+  duration: 2160h # 90 days
+  renewBefore: 360h # 15 days
+  privateKey:
+    algorithm: RSA
+    size: 2048
+{{- end }}

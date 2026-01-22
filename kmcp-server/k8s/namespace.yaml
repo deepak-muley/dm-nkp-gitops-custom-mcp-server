@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gitops-agent
+  labels:
+    app.kubernetes.io/name: dm-nkp-gitops-kmcp-server
+    app.kubernetes.io/part-of: gitops-monitoring

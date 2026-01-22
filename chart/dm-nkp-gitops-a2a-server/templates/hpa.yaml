@@ -1,0 +1,37 @@
+{{- if .Values.mcpServer.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "dm-nkp-gitops-a2a-server.fullname" . }}
+  labels:
+    {{- include "dm-nkp-gitops-a2a-server.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    {{- if eq .Values.deploymentMode "mcpserver" }}
+    apiVersion: kagent.dev/v1alpha1
+    kind: MCPServer
+    {{- else }}
+    apiVersion: apps/v1
+    kind: Deployment
+    {{- end }}
+    name: {{ include "dm-nkp-gitops-a2a-server.fullname" . }}
+  minReplicas: {{ .Values.mcpServer.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.mcpServer.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.mcpServer.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.mcpServer.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.mcpServer.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.mcpServer.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}

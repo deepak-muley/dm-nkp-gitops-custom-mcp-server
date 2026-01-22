@@ -1,0 +1,168 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "dm-nkp-gitops-a2a-server.fullname" . }}
+  labels:
+    {{- include "dm-nkp-gitops-a2a-server.labels" . | nindent 4 }}
+rules:
+  # Core Kubernetes resources - read only
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - events
+      - namespaces
+      - configmaps
+      - services
+    verbs: ["get", "list", "watch"]
+  
+  # Secrets - get only (for specific secrets, not list all)
+  - apiGroups: [""]
+    resources:
+      - secrets
+    verbs: ["get"]
+
+  # Deployments and other workloads
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+      - statefulsets
+      - daemonsets
+    verbs: ["get", "list", "watch"]
+
+  # ==========================================================================
+  # Flux CD CRDs
+  # ==========================================================================
+  
+  # Flux Kustomizations
+  - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+    resources:
+      - kustomizations
+    verbs: ["get", "list", "watch"]
+
+  # Flux Source Controller
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources:
+      - gitrepositories
+      - helmrepositories
+      - helmcharts
+      - ocirepositories
+      - buckets
+    verbs: ["get", "list", "watch"]
+
+  # Flux Helm Controller
+  - apiGroups: ["helm.toolkit.fluxcd.io"]
+    resources:
+      - helmreleases
+    verbs: ["get", "list", "watch"]
+
+  # Flux Notification Controller
+  - apiGroups: ["notification.toolkit.fluxcd.io"]
+    resources:
+      - alerts
+      - providers
+      - receivers
+    verbs: ["get", "list", "watch"]
+
+  # Flux Image Automation
+  - apiGroups: ["image.toolkit.fluxcd.io"]
+    resources:
+      - imagepolicies
+      - imagerepositories
+      - imageupdateautomations
+    verbs: ["get", "list", "watch"]
+
+  # ==========================================================================
+  # Cluster API (CAPI) CRDs
+  # ==========================================================================
+  
+  - apiGroups: ["cluster.x-k8s.io"]
+    resources:
+      - clusters
+      - machines
+      - machinesets
+      - machinedeployments
+      - machinepools
+      - machinehealthchecks
+    verbs: ["get", "list", "watch"]
+
+  # CAPI Bootstrap
+  - apiGroups: ["bootstrap.cluster.x-k8s.io"]
+    resources:
+      - kubeadmconfigs
+      - kubeadmconfigtemplates
+    verbs: ["get", "list", "watch"]
+
+  # CAPI Control Plane
+  - apiGroups: ["controlplane.cluster.x-k8s.io"]
+    resources:
+      - kubeadmcontrolplanes
+    verbs: ["get", "list", "watch"]
+
+  # ==========================================================================
+  # Kommander / NKP CRDs
+  # ==========================================================================
+  
+  - apiGroups: ["apps.kommander.d2iq.io"]
+    resources:
+      - apps
+      - clusterapps
+      - appdeployments
+    verbs: ["get", "list", "watch"]
+
+  - apiGroups: ["workspaces.kommander.d2iq.io"]
+    resources:
+      - workspaces
+    verbs: ["get", "list", "watch"]
+
+  # ==========================================================================
+  # Gatekeeper Policy CRDs
+  # ==========================================================================
+  
+  - apiGroups: ["templates.gatekeeper.sh"]
+    resources:
+      - constrainttemplates
+    verbs: ["get", "list", "watch"]
+
+  # Gatekeeper constraints (all constraint kinds)
+  - apiGroups: ["constraints.gatekeeper.sh"]
+    resources:
+      - "*"
+    verbs: ["get", "list", "watch"]
+
+  # Gatekeeper config
+  - apiGroups: ["config.gatekeeper.sh"]
+    resources:
+      - configs
+    verbs: ["get", "list", "watch"]
+
+  # Gatekeeper status
+  - apiGroups: ["status.gatekeeper.sh"]
+    resources:
+      - constraintpodstatuses
+      - constrainttemplatepodstatuses
+    verbs: ["get", "list", "watch"]
+
+  # ==========================================================================
+  # Kyverno Policy CRDs
+  # ==========================================================================
+  
+  - apiGroups: ["kyverno.io"]
+    resources:
+      - clusterpolicies
+      - policies
+      - clusteradmissionreports
+      - admissionreports
+      - clusterbackgroundscanreports
+      - backgroundscanreports
+    verbs: ["get", "list", "watch"]
+
+  # Kyverno policy reports (wgpolicyk8s.io)
+  - apiGroups: ["wgpolicyk8s.io"]
+    resources:
+      - clusterpolicyreports
+      - policyreports
+    verbs: ["get", "list", "watch"]
+{{- end }}
