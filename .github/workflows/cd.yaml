@@ -81,8 +81,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       
-      # Verify build output
-      - name: Verify build output
+      # Verify build output and OCI registry
+      - name: Verify Docker image in OCI registry
         run: |
           echo "Build step outputs:"
           echo "  digest: ${{ steps.build.outputs.digest }}"
@@ -91,6 +91,16 @@ jobs:
             exit 1
           else
             echo "✅ Image digest available: ${{ steps.build.outputs.digest }}"
+          fi
+          
+          # Verify image is accessible in OCI registry
+          IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
+          echo "Verifying Docker image is in OCI registry: ${IMAGE_TAG}"
+          if docker manifest inspect "${IMAGE_TAG}" >/dev/null 2>&1; then
+            echo "✅ Docker image verified in OCI registry: ${IMAGE_TAG}"
+          else
+            echo "⚠️ Warning: Could not verify image immediately (may need a moment to propagate)"
+            echo "Image should be available at: ${IMAGE_TAG}"
           fi
       
       # Sign the image using keyless signing (OIDC)
@@ -219,13 +229,59 @@ jobs:
       
       # Login to OCI registry
       - name: Login to OCI registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+        run: |
+          echo "Logging into Helm OCI registry: ${{ env.REGISTRY }}"
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin || {
+            echo "❌ Failed to login to Helm registry"
+            echo "Registry: ${{ env.REGISTRY }}"
+            echo "User: ${{ github.actor }}"
+            echo "Check that GITHUB_TOKEN has packages:write permission"
+            exit 1
+          }
+          echo "✅ Successfully logged into Helm OCI registry"
       
       # Push Helm chart to OCI registry
       - name: Push Helm chart
         run: |
-          helm push .helm-packages/dm-nkp-gitops-a2a-server-${{ steps.version.outputs.version }}.tgz \
-            oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+          CHART_FILE=".helm-packages/dm-nkp-gitops-a2a-server-${{ steps.version.outputs.version }}.tgz"
+          CHART_OCI_URL="oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/dm-nkp-gitops-a2a-server"
+          
+          if [ ! -f "${CHART_FILE}" ]; then
+            echo "❌ Chart file not found: ${CHART_FILE}"
+            exit 1
+          fi
+          
+          echo "Pushing Helm chart to OCI registry:"
+          echo "  Chart: ${CHART_FILE}"
+          echo "  OCI URL: ${CHART_OCI_URL}"
+          echo "  Version: ${{ steps.version.outputs.version }}"
+          
+          helm push "${CHART_FILE}" "${CHART_OCI_URL}" || {
+            echo "❌ Failed to push Helm chart to OCI registry"
+            exit 1
+          }
+          
+          echo "✅ Helm chart pushed successfully to OCI registry"
+          echo "Chart available at: ${CHART_OCI_URL}:${{ steps.version.outputs.version }}"
+      
+      # Verify Helm chart in OCI registry
+      - name: Verify Helm chart in OCI registry
+        run: |
+          CHART_OCI_URL="oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/dm-nkp-gitops-a2a-server"
+          CHART_VERSION="${{ steps.version.outputs.version }}"
+          
+          echo "Verifying Helm chart is in OCI registry:"
+          echo "  Chart: ${CHART_OCI_URL}"
+          echo "  Version: ${CHART_VERSION}"
+          
+          # Try to show chart info from OCI registry
+          if helm show chart "${CHART_OCI_URL}" --version "${CHART_VERSION}" >/dev/null 2>&1; then
+            echo "✅ Helm chart verified in OCI registry"
+            helm show chart "${CHART_OCI_URL}" --version "${CHART_VERSION}" | head -10
+          else
+            echo "⚠️ Warning: Could not verify chart immediately (may need a moment to propagate)"
+            echo "Chart should be available at: ${CHART_OCI_URL}:${CHART_VERSION}"
+          fi
       
       # Sign Helm chart
       - name: Sign Helm chart
@@ -293,8 +349,29 @@ jobs:
           path: catalog-repo
           # For PR method, fetch all branches
           fetch-depth: 0
+        continue-on-error: true
+      
+      - name: Verify catalog repository access
+        id: verify-access
+        continue-on-error: true
+        run: |
+          if [ ! -d "catalog-repo" ] || [ ! -f "catalog-repo/.git/config" ]; then
+            echo "access_ok=false" >> $GITHUB_OUTPUT
+            echo "❌ Failed to checkout catalog repository"
+            echo ""
+            echo "**Possible causes:**"
+            echo "1. Catalog repo doesn't exist: ${{ env.CATALOG_OWNER }}/${{ env.CATALOG_REPO }}"
+            echo "2. Cross-org access needed - Add CATALOG_REPO_TOKEN secret"
+            echo "3. Repository is private and token lacks access"
+            echo ""
+            echo "Workflow will continue but catalog won't be updated."
+          else
+            echo "access_ok=true" >> $GITHUB_OUTPUT
+            echo "✅ Successfully checked out catalog repository"
+          fi
       
       - name: Configure Git
+        if: steps.verify-access.outputs.access_ok == 'true'
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -352,7 +429,7 @@ jobs:
         working-directory: catalog-repo
         env:
           CHART_URL: oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/dm-nkp-gitops-a2a-server
-          CHART_VERSION: ${{ steps.get-version.outputs.chart_version }}
+          CHART_VERSION: ${{ needs.helm.outputs.chart_version }}
           FILE_PATH: ${{ steps.catalog-strategy.outputs.file_path }}
         run: |
           echo "Updating OCIRepository at ${FILE_PATH}"
@@ -370,7 +447,7 @@ jobs:
         working-directory: catalog-repo
         env:
           CHART_URL: oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/dm-nkp-gitops-a2a-server
-          CHART_VERSION: ${{ steps.get-version.outputs.chart_version }}
+          CHART_VERSION: ${{ needs.helm.outputs.chart_version }}
           FILE_PATH: ${{ steps.catalog-strategy.outputs.file_path }}
         run: |
           echo "Updating catalog manifest at ${FILE_PATH}"
@@ -440,8 +517,8 @@ jobs:
         if: steps.check-changes.outputs.has_changes == 'true' && env.CATALOG_UPDATE_METHOD == 'push'
         working-directory: catalog-repo
         env:
-          VERSION: ${{ steps.get-version.outputs.chart_version }}
-          IS_RELEASE: ${{ steps.get-version.outputs.is_release }}
+          VERSION: ${{ needs.helm.outputs.chart_version }}
+          IS_RELEASE: ${{ needs.helm.outputs.is_release }}
           TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           git add -A
@@ -462,17 +539,17 @@ jobs:
           token: ${{ secrets.CATALOG_REPO_TOKEN || secrets.GITHUB_TOKEN }}
           path: catalog-repo
           commit-message: |
-            chore: update dm-nkp-gitops-a2a-server to ${{ steps.get-version.outputs.chart_version }} [skip ci]
+            chore: update dm-nkp-gitops-a2a-server to ${{ needs.helm.outputs.chart_version }} [skip ci]
             
             Automated catalog update from CD workflow.
-          title: "chore: update dm-nkp-gitops-a2a-server to ${{ steps.get-version.outputs.chart_version }}"
+          title: "chore: update dm-nkp-gitops-a2a-server to ${{ needs.helm.outputs.chart_version }}"
           body: |
             ## Automated Catalog Update
             
             This PR updates the catalog with the new version of `dm-nkp-gitops-a2a-server`.
             
             **Details:**
-            - **Chart Version**: `${{ steps.get-version.outputs.chart_version }}`
+            - **Chart Version**: `${{ needs.helm.outputs.chart_version }}`
             - **Chart URL**: `oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/dm-nkp-gitops-a2a-server`
             - **Update Strategy**: `${{ steps.catalog-strategy.outputs.strategy }}`
             - **File Updated**: `${{ steps.catalog-strategy.outputs.file_path }}`
@@ -486,7 +563,7 @@ jobs:
             ---
             
             This is an automated update. Review the changes before merging.
-          branch: update/dm-nkp-gitops-a2a-server-${{ steps.get-version.outputs.chart_version }}
+          branch: update/dm-nkp-gitops-a2a-server-${{ needs.helm.outputs.chart_version }}
           delete-branch: true
           labels: |
             automated
@@ -518,7 +595,7 @@ jobs:
             echo "- **Update Method**: ${{ env.CATALOG_UPDATE_METHOD }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Strategy**: ${{ steps.catalog-strategy.outputs.strategy }}" >> $GITHUB_STEP_SUMMARY
             echo "- **File Updated**: ${{ steps.catalog-strategy.outputs.file_path }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Chart Version**: ${{ steps.get-version.outputs.chart_version }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Chart Version**: ${{ needs.helm.outputs.chart_version }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Chart URL**: oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/dm-nkp-gitops-a2a-server" >> $GITHUB_STEP_SUMMARY
             if [ "${{ steps.check-changes.outputs.has_changes }}" = "true" ]; then
               if [ "${{ env.CATALOG_UPDATE_METHOD }}" = "pr" ]; then
