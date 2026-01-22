@@ -6,6 +6,11 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/dm-nkp-gitops-a2a-server
+  CATALOG_REPO: dm-nkp-gitops-app-catalog
+  CATALOG_OWNER: ${{ github.repository_owner }}
+  # Catalog update method: "pr" (recommended, more secure) or "push" (direct commit, faster)
+  # Can be overridden via repository variable: CATALOG_UPDATE_METHOD
+  CATALOG_UPDATE_METHOD: pr
 jobs:
   docker:
     runs-on: ubuntu-latest
@@ -105,6 +110,9 @@ jobs:
       contents: read
       packages: write
       id-token: write  # Required for signing Helm charts
+    outputs:
+      chart_version: ${{ steps.job-outputs.outputs.chart_version }}
+      is_release: ${{ steps.job-outputs.outputs.is_release }}
     steps:
       - uses: actions/checkout@v4
       
@@ -173,3 +181,293 @@ jobs:
             .helm-packages/dm-nkp-gitops-a2a-server-${{ steps.version.outputs.version }}.tgz.sig
             .helm-packages/dm-nkp-gitops-a2a-server-${{ steps.version.outputs.version }}.tgz.pem
           retention-days: 90
+      
+      # Set job outputs for catalog update
+      - name: Set job outputs
+        id: job-outputs
+        run: |
+          echo "chart_version=${{ steps.version.outputs.version }}" >> $GITHUB_OUTPUT
+          echo "is_release=${{ steps.version.outputs.is_release }}" >> $GITHUB_OUTPUT
+
+  update-catalog:
+    runs-on: ubuntu-latest
+    needs: helm
+    permissions:
+      contents: write  # Required to push to catalog repo
+      pull-requests: write  # Required to create PRs
+    if: always() && needs.helm.result == 'success'
+    # Continue even if catalog update fails (non-blocking)
+    continue-on-error: true
+    steps:
+      - name: Determine authentication token
+        id: auth
+        run: |
+          # Use PAT if available (for cross-org), otherwise use GITHUB_TOKEN
+          if [ -n "${{ secrets.CATALOG_REPO_TOKEN }}" ]; then
+            echo "token=${{ secrets.CATALOG_REPO_TOKEN }}" >> $GITHUB_OUTPUT
+            echo "auth_method=pat" >> $GITHUB_OUTPUT
+            echo "✅ Using PAT for authentication (cross-org support enabled)"
+          else
+            echo "token=${{ secrets.GITHUB_TOKEN }}" >> $GITHUB_OUTPUT
+            echo "auth_method=github_token" >> $GITHUB_OUTPUT
+            echo "ℹ️ Using GITHUB_TOKEN (same-org only)"
+            echo "💡 For cross-org access, add CATALOG_REPO_TOKEN secret"
+          fi
+      
+      - name: Checkout catalog repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.CATALOG_OWNER }}/${{ env.CATALOG_REPO }}
+          token: ${{ steps.auth.outputs.token }}
+          path: catalog-repo
+          # For PR method, fetch all branches
+          fetch-depth: 0
+      
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Determine catalog update strategy
+        id: catalog-strategy
+        run: |
+          # Check if catalog repo was successfully checked out
+          if [ "${{ steps.verify-access.outputs.access_ok }}" != "true" ] || [ ! -d "catalog-repo" ]; then
+            echo "strategy=skip" >> $GITHUB_OUTPUT
+            echo "file_path=" >> $GITHUB_OUTPUT
+            echo "⚠️ Catalog repo not available, skipping update"
+            exit 0
+          fi
+          
+          # Check if catalog uses HelmRelease, OCIRepository, or catalog manifest
+          if [ -f "catalog-repo/apps/dm-nkp-gitops-a2a-server/helmrelease.yaml" ]; then
+            echo "strategy=helmrelease" >> $GITHUB_OUTPUT
+            echo "file_path=apps/dm-nkp-gitops-a2a-server/helmrelease.yaml" >> $GITHUB_OUTPUT
+          elif [ -f "catalog-repo/apps/dm-nkp-gitops-a2a-server/ocirepository.yaml" ]; then
+            echo "strategy=ocirepository" >> $GITHUB_OUTPUT
+            echo "file_path=apps/dm-nkp-gitops-a2a-server/ocirepository.yaml" >> $GITHUB_OUTPUT
+          elif [ -f "catalog-repo/catalog.yaml" ]; then
+            echo "strategy=catalog-manifest" >> $GITHUB_OUTPUT
+            echo "file_path=catalog.yaml" >> $GITHUB_OUTPUT
+          elif [ -f "catalog-repo/apps.yaml" ]; then
+            echo "strategy=apps-manifest" >> $GITHUB_OUTPUT
+            echo "file_path=apps.yaml" >> $GITHUB_OUTPUT
+          else
+            echo "strategy=auto-create" >> $GITHUB_OUTPUT
+            echo "file_path=apps/dm-nkp-gitops-a2a-server/helmrelease.yaml" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Update HelmRelease
+        if: steps.catalog-strategy.outputs.strategy == 'helmrelease'
+        working-directory: catalog-repo
+        env:
+          CHART_URL: oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/dm-nkp-gitops-a2a-server
+          CHART_VERSION: ${{ needs.helm.outputs.chart_version }}
+          FILE_PATH: ${{ steps.catalog-strategy.outputs.file_path }}
+        run: |
+          echo "Updating HelmRelease at ${FILE_PATH}"
+          # Update chart version in HelmRelease
+          if command -v yq &> /dev/null; then
+            yq eval ".spec.chart.spec.version = \"${CHART_VERSION}\"" -i "${FILE_PATH}"
+            yq eval ".spec.chart.spec.sourceRef.name = \"dm-nkp-gitops-a2a-server-chart\"" -i "${FILE_PATH}" 2>/dev/null || true
+          else
+            # Fallback to sed if yq is not available
+            sed -i "s|version:.*|version: ${CHART_VERSION}|g" "${FILE_PATH}"
+            sed -i "s|chart:.*dm-nkp-gitops-a2a-server.*|chart: dm-nkp-gitops-a2a-server|g" "${FILE_PATH}"
+          fi
+      
+      - name: Update OCIRepository
+        if: steps.catalog-strategy.outputs.strategy == 'ocirepository' && steps.catalog-strategy.outputs.strategy != 'skip'
+        working-directory: catalog-repo
+        env:
+          CHART_URL: oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/dm-nkp-gitops-a2a-server
+          CHART_VERSION: ${{ steps.get-version.outputs.chart_version }}
+          FILE_PATH: ${{ steps.catalog-strategy.outputs.file_path }}
+        run: |
+          echo "Updating OCIRepository at ${FILE_PATH}"
+          # Update ref in OCIRepository
+          if command -v yq &> /dev/null; then
+            yq eval ".spec.ref.tag = \"${CHART_VERSION}\"" -i "${FILE_PATH}"
+            yq eval ".spec.url = \"${CHART_URL}\"" -i "${FILE_PATH}"
+          else
+            sed -i "s|tag:.*|tag: ${CHART_VERSION}|g" "${FILE_PATH}"
+            sed -i "s|url:.*|url: ${CHART_URL}|g" "${FILE_PATH}"
+          fi
+      
+      - name: Update catalog manifest
+        if: steps.catalog-strategy.outputs.strategy == 'catalog-manifest' || steps.catalog-strategy.outputs.strategy == 'apps-manifest'
+        working-directory: catalog-repo
+        env:
+          CHART_URL: oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/dm-nkp-gitops-a2a-server
+          CHART_VERSION: ${{ steps.get-version.outputs.chart_version }}
+          FILE_PATH: ${{ steps.catalog-strategy.outputs.file_path }}
+        run: |
+          echo "Updating catalog manifest at ${FILE_PATH}"
+          # Update version in catalog manifest (YAML format)
+          if command -v yq &> /dev/null; then
+            yq eval ".apps.dm-nkp-gitops-a2a-server.version = \"${CHART_VERSION}\"" -i "${FILE_PATH}" || \
+            yq eval ".applications.dm-nkp-gitops-a2a-server.version = \"${CHART_VERSION}\"" -i "${FILE_PATH}" || \
+            yq eval ".[] | select(.name == \"dm-nkp-gitops-a2a-server\") | .version = \"${CHART_VERSION}\"" -i "${FILE_PATH}"
+          else
+            # Fallback to sed
+            sed -i "s|dm-nkp-gitops-a2a-server.*version.*|dm-nkp-gitops-a2a-server: version: ${CHART_VERSION}|g" "${FILE_PATH}"
+          fi
+      
+      - name: Create HelmRelease if missing
+        if: steps.catalog-strategy.outputs.strategy == 'auto-create' && steps.catalog-strategy.outputs.strategy != 'skip'
+        working-directory: catalog-repo
+        env:
+          CHART_URL: oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/dm-nkp-gitops-a2a-server
+          CHART_VERSION: ${{ needs.helm.outputs.chart_version }}
+          APP_NAME: dm-nkp-gitops-a2a-server
+        run: |
+          echo "Creating HelmRelease for ${APP_NAME}"
+          mkdir -p "apps/${APP_NAME}"
+          cat > "apps/${APP_NAME}/helmrelease.yaml" <<EOF
+          apiVersion: helm.toolkit.fluxcd.io/v2beta1
+          kind: HelmRelease
+          metadata:
+            name: ${APP_NAME}
+            namespace: gitops-agent
+          spec:
+            interval: 5m
+            chart:
+              spec:
+                chart: dm-nkp-gitops-a2a-server
+                version: ${CHART_VERSION}
+                sourceRef:
+                  kind: OCIRepository
+                  name: ${APP_NAME}-chart
+                interval: 1m
+          ---
+          apiVersion: source.toolkit.fluxcd.io/v1beta2
+          kind: OCIRepository
+          metadata:
+            name: ${APP_NAME}-chart
+            namespace: gitops-agent
+          spec:
+            interval: 5m
+            url: ${CHART_URL}
+            ref:
+              tag: ${CHART_VERSION}
+          EOF
+      
+      - name: Check for changes
+        id: check-changes
+        if: steps.catalog-strategy.outputs.strategy != 'skip'
+        working-directory: catalog-repo
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            git diff
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No changes detected in catalog"
+          fi
+      
+      - name: Commit and push catalog update (Direct Push)
+        if: steps.check-changes.outputs.has_changes == 'true' && env.CATALOG_UPDATE_METHOD == 'push'
+        working-directory: catalog-repo
+        env:
+          VERSION: ${{ steps.get-version.outputs.chart_version }}
+          IS_RELEASE: ${{ steps.get-version.outputs.is_release }}
+          TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          git add -A
+          if [ "${IS_RELEASE}" = "true" ]; then
+            COMMIT_MSG="chore: update dm-nkp-gitops-a2a-server to v${VERSION} [skip ci]"
+          else
+            COMMIT_MSG="chore: update dm-nkp-gitops-a2a-server to ${VERSION} [skip ci]"
+          fi
+          git commit -m "${COMMIT_MSG}"
+          # Configure git to use token for push
+          git remote set-url origin https://x-access-token:${TOKEN}@github.com/${{ env.CATALOG_OWNER }}/${{ env.CATALOG_REPO }}.git
+          git push origin HEAD:master || git push origin HEAD:main
+      
+      - name: Create Pull Request (Recommended)
+        if: steps.check-changes.outputs.has_changes == 'true' && env.CATALOG_UPDATE_METHOD == 'pr'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.CATALOG_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          path: catalog-repo
+          commit-message: |
+            chore: update dm-nkp-gitops-a2a-server to ${{ steps.get-version.outputs.chart_version }} [skip ci]
+            
+            Automated catalog update from CD workflow.
+          title: "chore: update dm-nkp-gitops-a2a-server to ${{ steps.get-version.outputs.chart_version }}"
+          body: |
+            ## Automated Catalog Update
+            
+            This PR updates the catalog with the new version of `dm-nkp-gitops-a2a-server`.
+            
+            **Details:**
+            - **Chart Version**: `${{ steps.get-version.outputs.chart_version }}`
+            - **Chart URL**: `oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/dm-nkp-gitops-a2a-server`
+            - **Update Strategy**: `${{ steps.catalog-strategy.outputs.strategy }}`
+            - **File Updated**: `${{ steps.catalog-strategy.outputs.file_path }}`
+            - **Source**: [Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            
+            **Triggered by:**
+            - Repository: `${{ github.repository }}`
+            - Commit: `${{ github.sha }}`
+            - Ref: `${{ github.ref }}`
+            
+            ---
+            
+            This is an automated update. Review the changes before merging.
+          branch: update/dm-nkp-gitops-a2a-server-${{ steps.get-version.outputs.chart_version }}
+          delete-branch: true
+          labels: |
+            automated
+            catalog-update
+          draft: false
+      
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Catalog Update Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Check if catalog repo was accessible
+          if [ "${{ steps.catalog-strategy.outputs.strategy }}" = "skip" ]; then
+            echo "### ⚠️ Catalog Update Skipped" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Catalog repository could not be accessed." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Possible causes:**" >> $GITHUB_STEP_SUMMARY
+            echo "1. Catalog repo doesn't exist: \`${{ env.CATALOG_OWNER }}/${{ env.CATALOG_REPO }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "2. Cross-org access needed - Add \`CATALOG_REPO_TOKEN\` secret" >> $GITHUB_STEP_SUMMARY
+            echo "3. Repository is private and token lacks access" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Solution:**" >> $GITHUB_STEP_SUMMARY
+            echo "- If cross-org: Add \`CATALOG_REPO_TOKEN\` secret (PAT with 'repo' scope)" >> $GITHUB_STEP_SUMMARY
+            echo "- If same-org: Check repository name and permissions" >> $GITHUB_STEP_SUMMARY
+            echo "- See: [Catalog Update Secrets Guide](docs/CATALOG_UPDATE_SECRETS.md)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Update Method**: ${{ env.CATALOG_UPDATE_METHOD }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Strategy**: ${{ steps.catalog-strategy.outputs.strategy }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **File Updated**: ${{ steps.catalog-strategy.outputs.file_path }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Chart Version**: ${{ steps.get-version.outputs.chart_version }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Chart URL**: oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/dm-nkp-gitops-a2a-server" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ steps.check-changes.outputs.has_changes }}" = "true" ]; then
+              if [ "${{ env.CATALOG_UPDATE_METHOD }}" = "pr" ]; then
+                echo "- **Status**: ✅ Pull request created successfully" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "- **Status**: ✅ Catalog updated successfully (direct push)" >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              echo "- **Status**: ℹ️ No changes needed" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Authentication" >> $GITHUB_STEP_SUMMARY
+            echo "- **Method**: ${{ steps.auth.outputs.auth_method }}" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ steps.auth.outputs.auth_method }}" = "pat" ]; then
+              echo "- ✅ Using PAT (cross-org support enabled)" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- ℹ️ Using GITHUB_TOKEN (same-org only)" >> $GITHUB_STEP_SUMMARY
+              if [ "${{ env.CATALOG_OWNER }}" != "${{ github.repository_owner }}" ]; then
+                echo "- ⚠️ **Cross-org detected**: Add \`CATALOG_REPO_TOKEN\` secret for access" >> $GITHUB_STEP_SUMMARY
+                echo "  - See: [Setup Guide](docs/CATALOG_UPDATE_SECRETS.md)" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          fi
