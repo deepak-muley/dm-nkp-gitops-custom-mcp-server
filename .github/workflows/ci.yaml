@@ -114,12 +114,9 @@ jobs:
           build-args: |
             VERSION=${{ steps.image-tag.outputs.tag }}
             GIT_COMMIT=${{ github.sha }}
-            BUILD_TIME=${{ github.event.head_commit.timestamp || github.event.repository.pushed_at || github.event.repository.updated_at }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-        outputs:
-          digest: ${{ steps.build.outputs.digest }}
-          imageid: ${{ steps.build.outputs.imageid }}
       
       # Sign the image using keyless signing (OIDC)
       - name: Sign container image
