@@ -1,6 +1,7 @@
 name: CD
 on:
   push:
+    branches: [master, main]
     tags: ['v*']
 env:
   REGISTRY: ghcr.io
@@ -15,9 +16,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      # Extract version from tag
+      # Determine version based on trigger type
       - id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Extract version from tag (v1.2.3 -> 1.2.3)
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "is_release=true" >> $GITHUB_OUTPUT
+          else
+            # For branch pushes, use branch-short-sha format
+            SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+            VERSION="${{ github.ref_name }}-${SHORT_SHA}"
+            echo "is_release=false" >> $GITHUB_OUTPUT
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version determined: ${VERSION}"
       
       # Install Cosign for image signing
       - name: Install Cosign
@@ -34,6 +47,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       
+      # Determine additional tags
+      - name: Set additional tags
+        id: additional-tags
+        run: |
+          if [ "${{ steps.version.outputs.is_release }}" = "true" ]; then
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}-latest" >> $GITHUB_OUTPUT
+          fi
+      
       # Build and push Docker image
       - name: Build and push Docker image
         id: build
@@ -43,7 +66,7 @@ jobs:
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.additional-tags.outputs.tag }}
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
@@ -85,9 +108,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      # Extract version from tag
+      # Determine version based on trigger type (same logic as docker job)
       - id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Extract version from tag (v1.2.3 -> 1.2.3)
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "is_release=true" >> $GITHUB_OUTPUT
+          else
+            # For branch pushes, use branch-short-sha format
+            SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+            VERSION="${{ github.ref_name }}-${SHORT_SHA}"
+            echo "is_release=false" >> $GITHUB_OUTPUT
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version determined: ${VERSION}"
       
       # Install Cosign for chart signing
       - name: Install Cosign
