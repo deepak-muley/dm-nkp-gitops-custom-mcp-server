@@ -110,21 +110,36 @@ jobs:
           echo "Signing image: ${IMAGE_TAG}"
           echo "Digest: ${IMAGE_DIGEST}"
           
-          # Wait a moment for image to be fully available in registry
-          sleep 2
+          # For multi-platform builds, wait longer for manifest to be available
+          echo "Waiting for image manifest to be available in registry..."
+          sleep 5
           
-          # Sign with retry
-          if ! cosign sign --yes ${IMAGE_TAG}; then
-            echo "⚠️ Signing failed, retrying once..."
-            sleep 5
-            cosign sign --yes ${IMAGE_TAG} || {
-              echo "❌ Signing failed after retry"
-              echo "This is non-blocking - image is still available"
-              exit 0
-            }
+          # Try to verify image exists before signing
+          if ! docker manifest inspect ${IMAGE_TAG} >/dev/null 2>&1; then
+            echo "⚠️ Image manifest not yet available, waiting..."
+            sleep 10
           fi
           
-          echo "✅ Image signed successfully"
+          # Sign with retry and better error handling
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if cosign sign --yes ${IMAGE_TAG} 2>&1; then
+              echo "✅ Image signed successfully"
+              exit 0
+            else
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "⚠️ Signing attempt $RETRY_COUNT failed, retrying in 5 seconds..."
+                sleep 5
+              else
+                echo "❌ Signing failed after $MAX_RETRIES attempts"
+                echo "This is non-blocking - image is still available without signature"
+                echo "You can sign it manually later if needed"
+                exit 0
+              fi
+            fi
+          done
       
       # Verify the signature
       - name: Verify image signature
