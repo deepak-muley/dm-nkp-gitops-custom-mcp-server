@@ -1,8 +1,14 @@
 name: CD
 on:
-  push:
+  # Run CD after CI succeeds (best practice: quality gate)
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [master, main]
-    tags: ['v*']
+  # Tags can trigger immediately (typically created after CI passes)
+  push:
+    tags:
+      - 'v*'
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/dm-nkp-gitops-a2a-server
@@ -14,29 +20,41 @@ env:
 jobs:
   docker:
     runs-on: ubuntu-latest
+    # Only run if CI succeeded (workflow_run) or triggered by tag (push)
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: read
       packages: write
       id-token: write  # Required for keyless signing
     steps:
       - uses: actions/checkout@v4
+        with:
+          # workflow_run: checkout the commit that triggered CI; tag push: use the tag
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
       
       # Determine version based on trigger type
       # Docker images can use any tag format, but we'll use semver for consistency
       - id: version
         run: |
+          # Detect if triggered by tag or branch (workflow_run or direct push)
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             # Extract version from tag (v1.2.3 -> 1.2.3)
             VERSION="${GITHUB_REF#refs/tags/v}"
             echo "is_release=true" >> $GITHUB_OUTPUT
           else
-            # For branch pushes, use semver prerelease format: 0.0.0-{branch}-{sha}
-            # This ensures consistency with Helm chart versioning
-            SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-            BRANCH_NAME="${{ github.ref_name }}"
+            # For branch pushes (workflow_run or direct), use semver prerelease format
+            # Get actual branch name and SHA from checkout
+            ACTUAL_SHA=$(git rev-parse HEAD | cut -c1-7)
+            if [ "${{ github.event_name }}" = "workflow_run" ]; then
+              # workflow_run: use branch from event context
+              BRANCH_NAME="${{ github.event.workflow_run.head_branch }}"
+            else
+              # Direct push: use ref_name
+              BRANCH_NAME="${{ github.ref_name }}"
+            fi
             # Sanitize branch name (replace invalid semver chars with hyphens)
             BRANCH_NAME=$(echo "${BRANCH_NAME}" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
-            VERSION="0.0.0-${BRANCH_NAME}-${SHORT_SHA}"
+            VERSION="0.0.0-${BRANCH_NAME}-${ACTUAL_SHA}"
             echo "is_release=false" >> $GITHUB_OUTPUT
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
@@ -190,23 +208,33 @@ jobs:
       is_release: ${{ steps.job-outputs.outputs.is_release }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # workflow_run: checkout the commit that triggered CI; tag push: use the tag
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
       
       # Determine version based on trigger type
       # Helm requires semver format, so branch pushes use prerelease format
       - id: version
         run: |
+          # Detect if triggered by tag or branch (workflow_run or direct push)
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             # Extract version from tag (v1.2.3 -> 1.2.3)
             VERSION="${GITHUB_REF#refs/tags/v}"
             echo "is_release=true" >> $GITHUB_OUTPUT
           else
-            # For branch pushes, use semver prerelease format: 0.0.0-{branch}-{sha}
-            # This ensures Helm accepts the version (semver requires MAJOR.MINOR.PATCH-prerelease)
-            SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-            BRANCH_NAME="${{ github.ref_name }}"
+            # For branch pushes (workflow_run or direct), use semver prerelease format
+            # Get actual branch name and SHA from checkout
+            ACTUAL_SHA=$(git rev-parse HEAD | cut -c1-7)
+            if [ "${{ github.event_name }}" = "workflow_run" ]; then
+              # workflow_run: use branch from event context
+              BRANCH_NAME="${{ github.event.workflow_run.head_branch }}"
+            else
+              # Direct push: use ref_name
+              BRANCH_NAME="${{ github.ref_name }}"
+            fi
             # Sanitize branch name (replace invalid semver chars with hyphens)
             BRANCH_NAME=$(echo "${BRANCH_NAME}" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
-            VERSION="0.0.0-${BRANCH_NAME}-${SHORT_SHA}"
+            VERSION="0.0.0-${BRANCH_NAME}-${ACTUAL_SHA}"
             echo "is_release=false" >> $GITHUB_OUTPUT
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
