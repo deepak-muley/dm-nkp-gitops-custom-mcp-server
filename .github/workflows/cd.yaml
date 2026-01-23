@@ -61,8 +61,9 @@ jobs:
           echo "Version determined: ${VERSION}"
       
       # Install Cosign for image signing
+      # Using v3.10.1 (latest v3.x) which installs Cosign v2.6.1
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.0.2
+        uses: sigstore/cosign-installer@v3.10.1
       
       # Set up Docker Buildx
       - uses: docker/setup-buildx-action@v3
@@ -241,8 +242,10 @@ jobs:
           echo "Version determined: ${VERSION}"
       
       # Install Cosign for chart signing
+      # Using v3.10.1 (latest v3.x) which installs Cosign v2.6.1
+      # v4.x is for Cosign v3.x, but v2.x is more stable for now
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.0.2
+        uses: sigstore/cosign-installer@v3.10.1
       
       # Install Helm
       - uses: azure/setup-helm@v4
@@ -325,16 +328,66 @@ jobs:
       - name: Sign Helm chart
         env:
           CHART_PATH: .helm-packages/dm-nkp-gitops-a2a-server-${{ steps.version.outputs.version }}.tgz
+          # Initialize TUF root to avoid "invalid key" errors
+          SIGSTORE_TUF_ROOT: "https://tuf-repo-cdn.sigstore.dev"
         run: |
           if [ ! -f "${CHART_PATH}" ]; then
             echo "❌ Chart file not found: ${CHART_PATH}"
             exit 1
           fi
+          
           echo "Signing Helm chart: ${CHART_PATH}"
-          cosign sign-blob --yes ${CHART_PATH} \
-            --output-signature ${CHART_PATH}.sig \
-            --output-certificate ${CHART_PATH}.pem
-          echo "✅ Chart signed successfully"
+          
+          # Clear any stale TUF cache to force fresh metadata fetch
+          echo "Clearing TUF cache to ensure fresh metadata..."
+          rm -rf "${HOME}/.sigstore/tuf" 2>/dev/null || true
+          rm -rf "${HOME}/.sigstore/root.json" 2>/dev/null || true
+          
+          # Initialize TUF root metadata first (this helps avoid "invalid key" errors)
+          echo "Initializing TUF root metadata..."
+          cosign initialize --mirror "${SIGSTORE_TUF_ROOT}" --root "${SIGSTORE_TUF_ROOT}/root.json" || {
+            echo "⚠️ TUF initialization failed, but continuing with signing attempt..."
+          }
+          
+          # Retry logic for signing with proper error handling
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          SIGN_SUCCESS=false
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            echo "Signing attempt $((RETRY_COUNT + 1)) of ${MAX_RETRIES}..."
+            
+            if cosign sign-blob --yes ${CHART_PATH} \
+              --output-signature ${CHART_PATH}.sig \
+              --output-certificate ${CHART_PATH}.pem 2>&1; then
+              echo "✅ Chart signed successfully"
+              SIGN_SUCCESS=true
+              break
+            else
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "⚠️ Signing attempt ${RETRY_COUNT} failed"
+                echo "Common causes: TUF metadata update issues, network problems"
+                echo "Retrying in 10 seconds after clearing TUF cache..."
+                sleep 10
+                # Clear TUF cache again before retry
+                rm -rf "${HOME}/.sigstore/tuf" 2>/dev/null || true
+                # Re-initialize TUF
+                cosign initialize --mirror "${SIGSTORE_TUF_ROOT}" --root "${SIGSTORE_TUF_ROOT}/root.json" 2>/dev/null || true
+              fi
+            fi
+          done
+          
+          if [ "${SIGN_SUCCESS}" != "true" ]; then
+            echo "❌ Failed to sign chart after ${MAX_RETRIES} attempts"
+            echo ""
+            echo "Troubleshooting steps:"
+            echo "1. Check Sigstore TUF mirror status: ${SIGSTORE_TUF_ROOT}"
+            echo "2. Verify network connectivity"
+            echo "3. Check Cosign version: $(cosign version)"
+            echo "4. Review TUF cache: ls -la ${HOME}/.sigstore/"
+            exit 1
+          fi
       
       # Upload signed chart artifacts
       - name: Upload signed chart artifacts

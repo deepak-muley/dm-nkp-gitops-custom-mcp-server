@@ -74,8 +74,10 @@ jobs:
       - uses: actions/checkout@v4
       
       # Install Cosign for image signing
+      # Install Cosign for image signing
+      # Using v3.10.1 (latest v3.x) which installs Cosign v2.6.1
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.0.2
+        uses: sigstore/cosign-installer@v3.10.1
       
       # Set up Docker Buildx
       - uses: docker/setup-buildx-action@v3
