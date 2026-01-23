@@ -22,6 +22,7 @@ jobs:
       - uses: actions/checkout@v4
       
       # Determine version based on trigger type
+      # Docker images can use any tag format, but we'll use semver for consistency
       - id: version
         run: |
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
@@ -29,9 +30,13 @@ jobs:
             VERSION="${GITHUB_REF#refs/tags/v}"
             echo "is_release=true" >> $GITHUB_OUTPUT
           else
-            # For branch pushes, use branch-short-sha format
+            # For branch pushes, use semver prerelease format: 0.0.0-{branch}-{sha}
+            # This ensures consistency with Helm chart versioning
             SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-            VERSION="${{ github.ref_name }}-${SHORT_SHA}"
+            BRANCH_NAME="${{ github.ref_name }}"
+            # Sanitize branch name (replace invalid semver chars with hyphens)
+            BRANCH_NAME=$(echo "${BRANCH_NAME}" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+            VERSION="0.0.0-${BRANCH_NAME}-${SHORT_SHA}"
             echo "is_release=false" >> $GITHUB_OUTPUT
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
@@ -186,7 +191,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      # Determine version based on trigger type (same logic as docker job)
+      # Determine version based on trigger type
+      # Helm requires semver format, so branch pushes use prerelease format
       - id: version
         run: |
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
@@ -194,9 +200,13 @@ jobs:
             VERSION="${GITHUB_REF#refs/tags/v}"
             echo "is_release=true" >> $GITHUB_OUTPUT
           else
-            # For branch pushes, use branch-short-sha format
+            # For branch pushes, use semver prerelease format: 0.0.0-{branch}-{sha}
+            # This ensures Helm accepts the version (semver requires MAJOR.MINOR.PATCH-prerelease)
             SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-            VERSION="${{ github.ref_name }}-${SHORT_SHA}"
+            BRANCH_NAME="${{ github.ref_name }}"
+            # Sanitize branch name (replace invalid semver chars with hyphens)
+            BRANCH_NAME=$(echo "${BRANCH_NAME}" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+            VERSION="0.0.0-${BRANCH_NAME}-${SHORT_SHA}"
             echo "is_release=false" >> $GITHUB_OUTPUT
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
