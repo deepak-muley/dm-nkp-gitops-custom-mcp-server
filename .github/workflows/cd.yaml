@@ -76,6 +76,39 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       
+      # Determine CI image reference (reuse image built in CI)
+      - name: Determine CI image reference
+        id: ci-image
+        run: |
+          # Get the SHA that CI used (from workflow_run or current ref)
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            CI_SHA="${{ github.event.workflow_run.head_sha }}"
+          else
+            CI_SHA="${{ github.sha }}"
+          fi
+          SHORT_SHA=$(echo "${CI_SHA}" | cut -c1-7)
+          BRANCH_NAME=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+          CI_IMAGE_TAG="${BRANCH_NAME}-${SHORT_SHA}"
+          CI_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-${CI_IMAGE_TAG}"
+          echo "ci_image=${CI_IMAGE}" >> $GITHUB_OUTPUT
+          echo "CI image to reuse: ${CI_IMAGE}"
+      
+      # Pull CI-built image (reuse instead of rebuilding)
+      - name: Pull CI-built image
+        id: pull-ci-image
+        run: |
+          echo "Pulling CI-built image: ${{ steps.ci-image.outputs.ci_image }}"
+          if docker pull "${{ steps.ci-image.outputs.ci_image }}" 2>&1; then
+            echo "✅ Successfully pulled CI image"
+            # Get image digest
+            DIGEST=$(docker inspect "${{ steps.ci-image.outputs.ci_image }}" --format='{{index .RepoDigests 0}}' | cut -d'@' -f2)
+            echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+            echo "Image digest: ${DIGEST}"
+          else
+            echo "⚠️ Could not pull CI image, will build new image"
+            echo "digest=" >> $GITHUB_OUTPUT
+          fi
+      
       # Determine additional tags
       - name: Set additional tags
         id: additional-tags
@@ -86,9 +119,36 @@ jobs:
             echo "tag=${{ github.ref_name }}-latest" >> $GITHUB_OUTPUT
           fi
       
-      # Build and push Docker image
-      - name: Build and push Docker image
+      # Tag and push CI image as production image (reuse instead of rebuilding)
+      - name: Tag and push production image (reuse CI image)
         id: build
+        if: steps.pull-ci-image.outputs.digest != ''
+        run: |
+          CI_IMAGE="${{ steps.ci-image.outputs.ci_image }}"
+          PROD_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
+          PROD_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.additional-tags.outputs.tag }}"
+          
+          echo "Reusing CI image: ${CI_IMAGE}"
+          echo "Tagging as production: ${PROD_IMAGE}"
+          
+          # Tag the CI image with production tags
+          docker tag "${CI_IMAGE}" "${PROD_IMAGE}"
+          docker tag "${CI_IMAGE}" "${PROD_TAG}"
+          
+          # Push production tags
+          docker push "${PROD_IMAGE}"
+          docker push "${PROD_TAG}"
+          
+          # Get digest for signing
+          DIGEST=$(docker inspect "${PROD_IMAGE}" --format='{{index .RepoDigests 0}}' | cut -d'@' -f2)
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+          echo "✅ Production image pushed: ${PROD_IMAGE}"
+          echo "Digest: ${DIGEST}"
+      
+      # Fallback: Build new image if CI image not available
+      - name: Build and push Docker image (fallback if CI image not available)
+        id: build-fallback
+        if: steps.pull-ci-image.outputs.digest == ''
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -105,16 +165,32 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       
+      # Set digest output (from either reuse or fallback build)
+      - name: Set final image digest
+        id: final-digest
+        run: |
+          # Get digest from either reused CI image or fallback build
+          if [ -n "${{ steps.build.outputs.digest }}" ]; then
+            echo "digest=${{ steps.build.outputs.digest }}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ steps.build-fallback.outputs.digest }}" ]; then
+            echo "digest=${{ steps.build-fallback.outputs.digest }}" >> $GITHUB_OUTPUT
+          else
+            # Fallback: Get digest from image tag
+            IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
+            DIGEST=$(docker inspect "${IMAGE_TAG}" --format='{{index .RepoDigests 0}}' 2>/dev/null | cut -d'@' -f2 || echo "")
+            echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+          fi
+          echo "Final digest: ${{ steps.final-digest.outputs.digest }}"
+      
       # Verify build output and OCI registry
       - name: Verify Docker image in OCI registry
         run: |
-          echo "Build step outputs:"
-          echo "  digest: ${{ steps.build.outputs.digest }}"
-          if [ -z "${{ steps.build.outputs.digest }}" ]; then
+          echo "Final image digest: ${{ steps.final-digest.outputs.digest }}"
+          if [ -z "${{ steps.final-digest.outputs.digest }}" ]; then
             echo "❌ Error: Image digest is empty - build may have failed"
             exit 1
           else
-            echo "✅ Image digest available: ${{ steps.build.outputs.digest }}"
+            echo "✅ Image digest available: ${{ steps.final-digest.outputs.digest }}"
           fi
           
           # Verify image is accessible in OCI registry
@@ -127,12 +203,87 @@ jobs:
             echo "Image should be available at: ${IMAGE_TAG}"
           fi
       
+      # Scan production container image for vulnerabilities (OS + dependencies)
+      # This scans the actual production image that gets deployed, including:
+      # - Base image OS packages (alpine, debian, ubuntu, etc.)
+      # - Application dependencies in container
+      # - All container layers
+      - name: Scan production container image with Trivy
+        if: steps.final-digest.outputs.digest != ''
+        continue-on-error: true
+        env:
+          IMAGE_TAG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+        run: |
+          if [ -z "${{ steps.final-digest.outputs.digest }}" ]; then
+            echo "⚠️ No digest available, skipping container scan"
+            exit 0
+          fi
+          
+          echo "🔍 Scanning production container image: ${IMAGE_TAG}"
+          echo ""
+          echo "This scan covers:"
+          echo "  ✓ Base image OS packages (alpine, debian, ubuntu, etc.)"
+          echo "  ✓ Application dependencies in container"
+          echo "  ✓ All container layers"
+          echo "  ✓ Runtime vulnerabilities"
+          echo ""
+          
+          # Install Trivy
+          echo "Installing Trivy..."
+          sudo apt-get update -qq
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release >/dev/null 2>&1
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add - >/dev/null 2>&1
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y trivy >/dev/null 2>&1
+          
+          # Wait for image to be fully available in registry
+          echo "Waiting for image to be available in registry..."
+          sleep 5
+          
+          # Scan image and output results (table format for logs)
+          echo "Running Trivy vulnerability scan..."
+          trivy image --exit-code 0 --severity CRITICAL,HIGH,MEDIUM \
+            --format table \
+            --output trivy-production-scan.txt \
+            "${IMAGE_TAG}" || {
+            echo "⚠️ Trivy found vulnerabilities (see report above)"
+          }
+          
+          # Display summary in logs
+          if [ -f trivy-production-scan.txt ]; then
+            echo ""
+            echo "=== Production Container Vulnerability Scan Results ==="
+            cat trivy-production-scan.txt
+            echo ""
+            echo "💡 Tip: Review critical/high vulnerabilities and update base image if needed"
+          fi
+          
+          # Generate SARIF for GitHub Security tab
+          echo "Generating SARIF report for GitHub Security tab..."
+          trivy image --format sarif \
+            --output trivy-production-scan.sarif \
+            --severity CRITICAL,HIGH,MEDIUM \
+            "${IMAGE_TAG}" || {
+            echo "⚠️ SARIF generation failed (non-blocking)"
+            exit 0
+          }
+      
+      - name: Upload production container scan results to GitHub Security tab
+        if: steps.final-digest.outputs.digest != '' && hashFiles('trivy-production-scan.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        permissions:
+          security-events: write
+        with:
+          sarif_file: 'trivy-production-scan.sarif'
+          category: 'trivy-production-container'
+      
       # Sign the image using keyless signing (OIDC)
       - name: Sign container image
         continue-on-error: true
         env:
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-          IMAGE_TAG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.final-digest.outputs.digest }}
+          IMAGE_TAG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.final-digest.outputs.digest }}
         run: |
           if [ -z "${IMAGE_DIGEST}" ] || [ "${IMAGE_DIGEST}" = "" ]; then
             echo "⚠️ Image digest is empty, skipping signing"
@@ -177,12 +328,12 @@ jobs:
       
       # Verify the signature
       - name: Verify image signature
-        if: steps.build.outputs.digest != ''
+        if: steps.final-digest.outputs.digest != ''
         continue-on-error: true
         env:
-          IMAGE_TAG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          IMAGE_TAG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.final-digest.outputs.digest }}
         run: |
-          if [ -z "${{ steps.build.outputs.digest }}" ]; then
+          if [ -z "${{ steps.final-digest.outputs.digest }}" ]; then
             echo "⚠️ No digest available, skipping verification"
             exit 0
           fi

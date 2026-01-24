@@ -203,23 +203,42 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image (PRs only for this step)
-        if: github.event_name == 'pull_request'
-        id: build-pr
+      - name: Determine CI image version
+        id: ci-version
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            VERSION="pr-${{ github.event.pull_request.number }}"
+          else
+            SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+            BRANCH_NAME=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]')
+            VERSION="${BRANCH_NAME}-${SHORT_SHA}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "CI image version: ${VERSION}"
+
+      - name: Build and push Docker image to dev registry
+        id: build-ci
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          push: false
+          push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image-tag.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-${{ steps.ci-version.outputs.version }}
           platforms: linux/amd64,linux/arm64
           build-args: |
-            VERSION=${{ steps.image-tag.outputs.tag }}
+            VERSION=${{ steps.ci-version.outputs.version }}
             GIT_COMMIT=${{ github.sha }}
             BUILD_TIME=${{ github.event.head_commit.timestamp }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      
+      - name: Output CI image reference
+        run: |
+          echo "CI_BUILT_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-${{ steps.ci-version.outputs.version }}" >> $GITHUB_ENV
+          echo "CI_IMAGE_DIGEST=${{ steps.build-ci.outputs.digest }}" >> $GITHUB_ENV
+          echo "✅ CI image built and pushed: ${{ env.CI_BUILT_IMAGE }}"
+          echo "Digest: ${{ steps.build-ci.outputs.digest }}"
 
       - name: Upload Docker image metadata
         if: github.event_name == 'pull_request'
