@@ -74,6 +74,7 @@ Production deployment guides and operational procedures.
 Security policies, threat models, and compliance.
 
 - **[SECURITY.md](./06-SECURITY/SECURITY.md)** - Security policies and vulnerability reporting
+- **[SECURITY_SCANNING_WORKFLOW.md](./06-SECURITY/SECURITY_SCANNING_WORKFLOW.md)** - Complete guide to security.yaml workflow and scanners
 - **[K8S_SECURITY_RUNBOOK.md](./06-SECURITY/K8S_SECURITY_RUNBOOK.md)** - Kubernetes security best practices
 
 ---
@@ -212,6 +213,7 @@ When adding new documentation:
 | Catalog updates | [04-CATALOG_UPDATE/CATALOG_UPDATE_QUICK_START.md](./04-CATALOG_UPDATE/CATALOG_UPDATE_QUICK_START.md) |
 | Production setup | [05-DEPLOYMENT/ENTERPRISE_DEPLOYMENT.md](./05-DEPLOYMENT/ENTERPRISE_DEPLOYMENT.md) |
 | Security policies | [06-SECURITY/SECURITY.md](./06-SECURITY/SECURITY.md) |
+| Security scanning | [06-SECURITY/SECURITY_SCANNING_WORKFLOW.md](./06-SECURITY/SECURITY_SCANNING_WORKFLOW.md) |
 | Debugging help | [07-TROUBLESHOOTING/K8S_TROUBLESHOOTING_RUNBOOK.md](./07-TROUBLESHOOTING/K8S_TROUBLESHOOTING_RUNBOOK.md) |
 | Best practices | [08-LEARNING/RUNBOOK_BEST_PRACTICES.md](./08-LEARNING/RUNBOOK_BEST_PRACTICES.md) |
 | Governance | [09-GOVERNANCE/GOVERNANCE.md](./09-GOVERNANCE/GOVERNANCE.md) |
