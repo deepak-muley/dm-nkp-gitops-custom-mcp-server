@@ -391,7 +391,7 @@ jobs:
       
       # Upload signed chart artifacts
       - name: Upload signed chart artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: helm-chart-signed
           path: |
