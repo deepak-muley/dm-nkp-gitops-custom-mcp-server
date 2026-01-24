@@ -1,12 +1,15 @@
 name: CI
+
 on:
   push:
     branches: [master, main]
   pull_request:
     branches: [master, main]
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/dm-nkp-gitops-a2a-server
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -15,27 +18,72 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
       - name: Download dependencies
         run: go mod download
+
+      - name: Check for secrets (pre-commit hook)
+        run: |
+          echo "Checking for common secret patterns..."
+          if grep -r "private_key\|password\|secret\|token" . --include="*.go" --include="*.yaml" --include="*.yml" 2>/dev/null | grep -v ".git" | grep -v "vendor"; then
+            echo "⚠️ Possible secrets found - review before committing"
+          else
+            echo "✓ No obvious secrets detected"
+          fi
+
+      - name: Run linters (golangci-lint)
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          golangci-lint run ./... || true
+
       - name: Verify code compiles
         run: |
           echo "Verifying code compiles..."
           go build ./cmd/server
           go build ./cmd/a2a-server
           echo "✅ Code compiles successfully"
-      
-      - name: Run tests
+
+      - name: Run unit tests
         continue-on-error: true
         run: |
-          # Try to run tests, but don't fail if none exist
           echo "Looking for test files..."
           if find . -name "*_test.go" -type f | grep -q .; then
             echo "Found test files, running tests..."
-            go test -v ./... || echo "⚠️ Some tests failed"
+            go test -v -coverprofile=coverage.out ./... || echo "⚠️ Some tests failed"
+            go tool cover -func=coverage.out | tail -5
           else
             echo "ℹ️ No test files found (*_test.go), skipping test execution"
             echo "✅ Code compilation verified in previous step"
           fi
+
+      - name: Run integration tests
+        continue-on-error: true
+        run: |
+          if [ -f "scripts/test-with-kind.sh" ]; then
+            echo "Running integration tests with kind..."
+            bash scripts/test-with-kind.sh || echo "⚠️ Integration tests failed"
+          else
+            echo "ℹ️ No integration test script found"
+          fi
+
+      - name: Upload coverage reports (if codecov token available)
+        uses: codecov/codecov-action@v4
+        if: always()
+        continue-on-error: true
+        with:
+          files: ./coverage.out
+          flags: unit
+          fail_ci_if_error: false
+          verbose: false
+
   build:
     runs-on: ubuntu-latest
     needs: test
@@ -44,53 +92,98 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
       - name: Download dependencies
         run: go mod download
+
       - name: Build MCP server
         run: make build
+
       - name: Build A2A server
         run: make build-a2a
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: |
+            bin/server
+            bin/a2a-server
+          retention-days: 30
+
   helm:
     runs-on: ubuntu-latest
+    needs: test
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
+
       - name: Lint Helm chart
+        run: helm lint chart/dm-nkp-gitops-a2a-server
+
+      - name: Template Helm chart
+        run: helm template dm-nkp-gitops-a2a-server chart/dm-nkp-gitops-a2a-server
+
+      - name: Upload Helm chart artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart
+          path: chart/
+          retention-days: 30
+
+  # Kubernetes manifest security scanning (similar to custom-app's kubesec)
+  kubesec:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubesec
         run: |
-          if [ -d "chart/dm-nkp-gitops-a2a-server" ]; then
-            helm lint chart/dm-nkp-gitops-a2a-server || echo "⚠️ Helm lint warnings found"
-          else
-            echo "❌ Helm chart directory not found"
-            exit 1
-          fi
+          echo "Installing kubesec v2.14.2..."
+          curl -sSL https://github.com/controlplaneio/kubesec/releases/download/v2.14.2/kubesec_linux_amd64.tar.gz | tar -xz
+          sudo mv kubesec /usr/local/bin/
+          kubesec version
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Scan Helm templates for security issues
+        run: |
+          echo "Scanning Helm chart templates with kubesec..."
+          helm template dm-nkp-gitops-a2a-server chart/dm-nkp-gitops-a2a-server | kubesec scan - || {
+            echo "⚠️ Kubesec found security issues (non-blocking)"
+          }
+
+      - name: Run kubesec on chart files
+        continue-on-error: true
+        run: |
+          echo "Scanning individual chart manifests..."
+          for file in chart/dm-nkp-gitops-a2a-server/templates/*.yaml; do
+            if [ -f "$file" ]; then
+              echo "Scanning: $file"
+              kubesec scan "$file" || true
+            fi
+          done
+
   docker:
     runs-on: ubuntu-latest
     needs: build
     permissions:
       contents: read
       packages: write
-      id-token: write  # Required for keyless signing
+      id-token: write
     steps:
       - uses: actions/checkout@v4
-      
-      # Install Cosign for image signing
-      # Install Cosign for image signing
-      # Using v3.10.1 (latest v3.x) which installs Cosign v2.6.1
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.10.1
-      
-      # Set up Docker Buildx
-      - uses: docker/setup-buildx-action@v3
-      
-      # Login to GitHub Container Registry
-      - name: Login to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      
-      # Determine image tag based on branch/PR
+
       - name: Set image tag
         id: image-tag
         run: |
@@ -100,18 +193,26 @@ jobs:
             SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
             echo "tag=${{ github.ref_name }}-${SHORT_SHA}" >> $GITHUB_OUTPUT
           fi
-      
-      # Build and push Docker image
-      - name: Build and push Docker image
-        id: build
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image (PRs only for this step)
+        if: github.event_name == 'pull_request'
+        id: build-pr
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: false
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image-tag.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ steps.image-tag.outputs.tag }}
@@ -119,84 +220,12 @@ jobs:
             BUILD_TIME=${{ github.event.head_commit.timestamp }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      
-      # Verify build output
-      - name: Verify build output
-        if: github.event_name != 'pull_request'
-        run: |
-          echo "Build step outputs:"
-          echo "  digest: ${{ steps.build.outputs.digest }}"
-          echo "  imageid: ${{ steps.build.outputs.imageid }}"
-          if [ -z "${{ steps.build.outputs.digest }}" ]; then
-            echo "⚠️ Warning: Image digest is empty"
-            echo "This might happen if the image wasn't pushed or build failed"
-          else
-            echo "✅ Image digest available: ${{ steps.build.outputs.digest }}"
-          fi
-      
-      # Sign the image using keyless signing (OIDC)
-      - name: Sign container image
-        if: github.event_name != 'pull_request'
-        continue-on-error: true
-        env:
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-          IMAGE_TAG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
-        run: |
-          if [ -z "${IMAGE_DIGEST}" ] || [ "${IMAGE_DIGEST}" = "" ]; then
-            echo "⚠️ Image digest is empty, skipping signing"
-            echo "Build step outputs:"
-            echo "  digest: ${{ steps.build.outputs.digest }}"
-            echo "  imageid: ${{ steps.build.outputs.imageid }}"
-            exit 0
-          fi
-          
-          echo "Signing image: ${IMAGE_TAG}"
-          echo "Digest: ${IMAGE_DIGEST}"
-          
-          # For multi-platform builds, wait longer for manifest to be available
-          echo "Waiting for image manifest to be available in registry..."
-          sleep 5
-          
-          # Try to verify image exists before signing
-          if ! docker manifest inspect ${IMAGE_TAG} >/dev/null 2>&1; then
-            echo "⚠️ Image manifest not yet available, waiting..."
-            sleep 10
-          fi
-          
-          # Sign with retry and better error handling
-          MAX_RETRIES=3
-          RETRY_COUNT=0
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            if cosign sign --yes ${IMAGE_TAG} 2>&1; then
-              echo "✅ Image signed successfully"
-              exit 0
-            else
-              RETRY_COUNT=$((RETRY_COUNT + 1))
-              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                echo "⚠️ Signing attempt $RETRY_COUNT failed, retrying in 5 seconds..."
-                sleep 5
-              else
-                echo "❌ Signing failed after $MAX_RETRIES attempts"
-                echo "This is non-blocking - image is still available without signature"
-                echo "You can sign it manually later if needed"
-                exit 0
-              fi
-            fi
-          done
-      
-      # Upload build artifacts
-      - name: Upload build artifacts
-        if: always() && steps.build.outputs.digest != ''
-        run: |
-          mkdir -p .github/workflows
-          echo "${{ steps.build.outputs.digest }}" > .github/workflows/digest.txt
-          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}" >> .github/workflows/digest.txt
-          echo "Tag: ${{ steps.image-tag.outputs.tag }}" >> .github/workflows/digest.txt
-      
-      - name: Upload digest artifact
-        if: always() && steps.build.outputs.digest != ''
+
+      - name: Upload Docker image metadata
+        if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: docker-image-digest
-          path: .github/workflows/digest.txt
-          retention-days: 30
+          name: docker-image-metadata
+          path: |
+            .github/workflows/
+          retention-days: 7
