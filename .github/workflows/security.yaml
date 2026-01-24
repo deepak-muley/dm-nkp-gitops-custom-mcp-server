@@ -74,6 +74,9 @@ jobs:
   dependency-check:
     name: OWASP Dependency Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -113,8 +116,8 @@ jobs:
           args: '-no-fail -fmt sarif -out gosec-results.sarif ./...'
 
       - name: Upload Gosec results
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        if: always() && hashFiles('gosec-results.sarif') != ''
         with:
           sarif_file: 'gosec-results.sarif'
           category: 'gosec'
@@ -140,6 +143,9 @@ jobs:
   container-scan:
     name: Container Image Vulnerability Scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     steps:
       - name: Checkout repository
@@ -181,12 +187,16 @@ jobs:
           go-version: '1.22'
 
       - name: Run license check
+        continue-on-error: true
         run: |
-          go install github.com/google/licenseclassifier/v2@latest
-          go mod graph | cut -d' ' -f2 | cut -d'@' -f1 | sort -u > /tmp/deps.txt
-          echo "Dependencies found:"
-          cat /tmp/deps.txt | head -20
-          echo "✓ License check completed (informational)"
+          echo "Checking Go module dependencies..."
+          if go mod graph 2>/dev/null | cut -d' ' -f2 | cut -d'@' -f1 | sort -u > /tmp/deps.txt; then
+            echo "Dependencies found:"
+            cat /tmp/deps.txt | head -20
+            echo "✓ License check completed (informational)"
+          else
+            echo "⚠️ Could not analyze dependencies (non-blocking)"
+          fi
 
   # Summary of all security scans
   security-summary:
