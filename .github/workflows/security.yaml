@@ -29,16 +29,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: go
           queries: security-and-quality
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:go"
 
@@ -46,6 +46,9 @@ jobs:
   trivy-fs:
     name: Trivy Filesystem Scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -87,7 +90,7 @@ jobs:
             --suppression suppression.xml
 
       - name: Upload Dependency-Check results
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: './dependency-check/report.sarif'
@@ -97,6 +100,9 @@ jobs:
   gosec:
     name: Gosec Security Scanner
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -117,6 +123,9 @@ jobs:
   grype:
     name: Grype Vulnerability Scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -152,7 +161,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
 
       - name: Upload container scan results
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: 'trivy-container-results.sarif'
@@ -183,6 +192,8 @@ jobs:
   security-summary:
     name: Security Scan Summary
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: [codeql, trivy-fs, dependency-check, gosec, grype]
     if: always()
     steps:
