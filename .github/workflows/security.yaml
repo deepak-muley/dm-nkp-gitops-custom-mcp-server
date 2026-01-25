@@ -112,7 +112,7 @@ jobs:
       - name: Prepare Dependency-Check args
         id: dc-args
         run: |
-          ARGS="--enable-experimental --scan ./ --log DEBUG"
+          ARGS="--project dm-nkp-gitops-custom-mcp-server --enable-experimental --scan ./ --log DEBUG"
           if [ -f "suppression.xml" ]; then
             ARGS="$ARGS --suppression suppression.xml"
             echo "Using suppression.xml file"
