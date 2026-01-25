@@ -38,6 +38,11 @@ func (r *Registry) handleGetClusterStatus(args map[string]interface{}) (*mcp.Too
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Validate input to prevent injection attacks
+	if err := validateToolArgs(args); err != nil {
+		return nil, err
+	}
+
 	clusterName, _ := args["cluster_name"].(string)
 	namespace, _ := args["namespace"].(string)
 
@@ -129,12 +134,19 @@ func (r *Registry) handleListMachines(args map[string]interface{}) (*mcp.ToolCal
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Validate input to prevent injection attacks
+	if err := validateToolArgs(args); err != nil {
+		return nil, err
+	}
+
 	clusterName, _ := args["cluster_name"].(string)
 	namespace, _ := args["namespace"].(string)
 
 	listOptions := metav1.ListOptions{}
 	if clusterName != "" {
-		listOptions.LabelSelector = fmt.Sprintf("cluster.x-k8s.io/cluster-name=%s", clusterName)
+		// Sanitize cluster name to prevent injection in label selector
+		sanitizedClusterName := sanitizeForLogging(clusterName)
+		listOptions.LabelSelector = fmt.Sprintf("cluster.x-k8s.io/cluster-name=%s", sanitizedClusterName)
 	}
 
 	var machineList *unstructured.UnstructuredList
@@ -154,7 +166,9 @@ func (r *Registry) handleListMachines(args map[string]interface{}) (*mcp.ToolCal
 	sb.WriteString("# CAPI Machines\n\n")
 
 	if clusterName != "" {
-		sb.WriteString(fmt.Sprintf("**Cluster:** %s\n\n", clusterName))
+		// Sanitize user input before including in output
+		sanitizedClusterName := sanitizeForLogging(clusterName)
+		sb.WriteString(fmt.Sprintf("**Cluster:** %s\n\n", sanitizedClusterName))
 	}
 
 	sb.WriteString("| Namespace | Name | Cluster | Phase | Node | Provider ID |\n")

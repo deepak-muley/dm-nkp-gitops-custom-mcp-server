@@ -32,6 +32,11 @@ func (r *Registry) handleGetAppDeployments(args map[string]interface{}) (*mcp.To
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Validate input to prevent injection attacks
+	if err := validateToolArgs(args); err != nil {
+		return nil, err
+	}
+
 	workspace, _ := args["workspace"].(string)
 	appName, _ := args["app_name"].(string)
 

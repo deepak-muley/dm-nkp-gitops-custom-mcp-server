@@ -124,6 +124,11 @@ func (r *Registry) handleListKustomizations(args map[string]interface{}) (*mcp.T
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Validate input to prevent injection attacks
+	if err := validateToolArgs(args); err != nil {
+		return nil, err
+	}
+
 	namespace, _ := args["namespace"].(string)
 	statusFilter, _ := args["status_filter"].(string)
 	if statusFilter == "" {
@@ -200,6 +205,11 @@ func (r *Registry) handleGetKustomization(args map[string]interface{}) (*mcp.Too
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Validate input to prevent injection attacks
+	if err := validateToolArgs(args); err != nil {
+		return nil, err
+	}
+
 	name, ok := args["name"].(string)
 	if !ok || name == "" {
 		return nil, fmt.Errorf("name is required")
@@ -216,7 +226,10 @@ func (r *Registry) handleGetKustomization(args map[string]interface{}) (*mcp.Too
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# Kustomization: %s/%s\n\n", namespace, name))
+	// Sanitize user input before including in output
+	sanitizedNamespace := sanitizeForLogging(namespace)
+	sanitizedName := sanitizeForLogging(name)
+	sb.WriteString(fmt.Sprintf("# Kustomization: %s/%s\n\n", sanitizedNamespace, sanitizedName))
 
 	// Status
 	sb.WriteString("## Status\n\n")
@@ -356,6 +369,11 @@ func (r *Registry) handleListGitRepositories(args map[string]interface{}) (*mcp.
 func (r *Registry) handleGetHelmReleases(args map[string]interface{}) (*mcp.ToolCallResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// Validate input to prevent injection attacks
+	if err := validateToolArgs(args); err != nil {
+		return nil, err
+	}
 
 	namespace, _ := args["namespace"].(string)
 	statusFilter, _ := args["status_filter"].(string)

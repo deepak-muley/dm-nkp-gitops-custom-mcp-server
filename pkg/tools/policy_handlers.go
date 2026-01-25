@@ -39,6 +39,11 @@ func (r *Registry) handleCheckPolicyViolations(args map[string]interface{}) (*mc
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Validate input to prevent injection attacks
+	if err := validateToolArgs(args); err != nil {
+		return nil, err
+	}
+
 	policyEngine, _ := args["policy_engine"].(string)
 	if policyEngine == "" {
 		policyEngine = "both"
@@ -192,6 +197,11 @@ func (r *Registry) handleCheckPolicyViolations(args map[string]interface{}) (*mc
 func (r *Registry) handleListConstraints(args map[string]interface{}) (*mcp.ToolCallResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// Validate input to prevent injection attacks
+	if err := validateToolArgs(args); err != nil {
+		return nil, err
+	}
 
 	constraintKind, _ := args["constraint_kind"].(string)
 

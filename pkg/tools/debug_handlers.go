@@ -37,6 +37,11 @@ func (r *Registry) handleDebugReconciliation(args map[string]interface{}) (*mcp.
 		return nil, fmt.Errorf("namespace is required")
 	}
 
+	// Validate input to prevent injection attacks
+	if err := validateToolArgs(args); err != nil {
+		return nil, err
+	}
+
 	var gvr schema.GroupVersionResource
 	switch resourceType {
 	case "kustomization":
@@ -247,6 +252,11 @@ func (r *Registry) handleGetEvents(args map[string]interface{}) (*mcp.ToolCallRe
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Validate input to prevent injection attacks
+	if err := validateToolArgs(args); err != nil {
+		return nil, err
+	}
+
 	namespace, ok := args["namespace"].(string)
 	if !ok || namespace == "" {
 		return nil, fmt.Errorf("namespace is required")
@@ -265,7 +275,9 @@ func (r *Registry) handleGetEvents(args map[string]interface{}) (*mcp.ToolCallRe
 
 	listOptions := metav1.ListOptions{}
 	if resourceName != "" {
-		listOptions.FieldSelector = fmt.Sprintf("involvedObject.name=%s", resourceName)
+		// Sanitize resource name to prevent injection in field selector
+		sanitizedResourceName := sanitizeForLogging(resourceName)
+		listOptions.FieldSelector = fmt.Sprintf("involvedObject.name=%s", sanitizedResourceName)
 	}
 
 	events, err := r.clients.Clientset.CoreV1().Events(namespace).List(ctx, listOptions)
@@ -292,10 +304,13 @@ func (r *Registry) handleGetEvents(args map[string]interface{}) (*mcp.ToolCallRe
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# Events in %s\n\n", namespace))
+	// Sanitize user input before including in output
+	sanitizedNamespace := sanitizeForLogging(namespace)
+	sb.WriteString(fmt.Sprintf("# Events in %s\n\n", sanitizedNamespace))
 
 	if resourceName != "" {
-		sb.WriteString(fmt.Sprintf("**Resource:** %s\n\n", resourceName))
+		sanitizedResourceName := sanitizeForLogging(resourceName)
+		sb.WriteString(fmt.Sprintf("**Resource:** %s\n\n", sanitizedResourceName))
 	}
 
 	if len(filtered) == 0 {
@@ -332,6 +347,11 @@ func (r *Registry) handleGetEvents(args map[string]interface{}) (*mcp.ToolCallRe
 func (r *Registry) handleGetPodLogs(args map[string]interface{}) (*mcp.ToolCallResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// Validate input to prevent injection attacks
+	if err := validateToolArgs(args); err != nil {
+		return nil, err
+	}
 
 	podName, ok := args["pod_name"].(string)
 	if !ok || podName == "" {
@@ -384,11 +404,20 @@ func (r *Registry) handleGetPodLogs(args map[string]interface{}) (*mcp.ToolCallR
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# Pod Logs: %s/%s\n\n", namespace, podName))
-	sb.WriteString(fmt.Sprintf("**Container:** %s\n", container))
+	// Sanitize user input before including in output
+	sanitizedNamespace := sanitizeForLogging(namespace)
+	sanitizedPodName := sanitizeForLogging(podName)
+	sanitizedContainer := sanitizeForLogging(container)
+	
+	sb.WriteString(fmt.Sprintf("# Pod Logs: %s/%s\n\n", sanitizedNamespace, sanitizedPodName))
+	sb.WriteString(fmt.Sprintf("**Container:** %s\n", sanitizedContainer))
 	sb.WriteString(fmt.Sprintf("**Tail Lines:** %d\n\n", tailLines))
 	sb.WriteString("```\n")
-	sb.WriteString(buf.String())
+	
+	// Redact sensitive data from pod logs before returning
+	logContent := buf.String()
+	redactedLogs := redactSensitiveData(logContent)
+	sb.WriteString(redactedLogs)
 	sb.WriteString("```\n")
 
 	return &mcp.ToolCallResult{

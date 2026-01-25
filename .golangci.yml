@@ -1,0 +1,56 @@
+# golangci-lint configuration
+# See: https://golangci-lint.run/usage/configuration/
+
+linters-settings:
+  govet:
+    check-shadowing: true
+  gocyclo:
+    min-complexity: 15
+  dupl:
+    threshold: 100
+  goconst:
+    min-len: 2
+    min-occurrences: 2
+  gosec:
+    # Exclude some rules that are too strict for our use case
+    excludes:
+      - G104  # Errors unhandled (we handle errors explicitly)
+      - G107  # HTTP request with variable url (not applicable for stdio-based MCP)
+      - G402  # TLS InsecureSkipVerify (we use proper TLS in production)
+      - G501  # Import blocklist (we use trusted dependencies)
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - security
+    disabled-checks:
+      - dupImport
+      - ifElseChain
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - gocyclo
+    - dupl
+    - goconst
+    # Security linters
+    - gosec        # Security-focused static analysis
+    - gocritic     # More opinionated checks including security
+    - gofmt        # Format checking
+    - goimports    # Import formatting
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - dupl
