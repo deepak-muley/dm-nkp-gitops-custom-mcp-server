@@ -9,6 +9,14 @@ on:
   push:
     tags:
       - 'v*'
+
+# Cancel previous CD runs when a new one starts (same branch/tag)
+# For workflow_run: use the ref from the triggering Security workflow
+# For tag push: use the tag ref
+concurrency:
+  group: cd-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/dm-nkp-gitops-a2a-server

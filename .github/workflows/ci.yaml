@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [master, main]
 
+# Cancel previous CI runs when a new one starts (same branch/PR)
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/dm-nkp-gitops-a2a-server

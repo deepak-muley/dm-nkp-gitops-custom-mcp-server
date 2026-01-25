@@ -15,6 +15,13 @@ on:
     # Run security scans daily at 2 AM UTC
     - cron: '0 2 * * *'
 
+# Cancel previous Security runs when a new one starts (same branch/PR)
+# For workflow_run: use the ref from the triggering CI workflow
+# For direct triggers: use current ref
+concurrency:
+  group: security-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/dm-nkp-gitops-a2a-server
