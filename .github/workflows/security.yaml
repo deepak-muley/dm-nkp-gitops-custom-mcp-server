@@ -35,6 +35,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # workflow_run: checkout the commit that triggered CI; direct trigger: use default ref
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
@@ -62,6 +65,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # workflow_run: checkout the commit that triggered CI; direct trigger: use default ref
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@master
@@ -92,6 +98,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # workflow_run: checkout the commit that triggered CI; direct trigger: use default ref
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - name: Prepare Dependency-Check args
         id: dc-args
@@ -131,6 +140,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # workflow_run: checkout the commit that triggered CI; direct trigger: use default ref
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - name: Run Gosec Security Scanner
         uses: securego/gosec@master
@@ -156,6 +168,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # workflow_run: checkout the commit that triggered CI; direct trigger: use default ref
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - name: Install Grype
         run: |
@@ -191,6 +206,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # workflow_run: checkout the commit that triggered CI; direct trigger: use default ref
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - name: Build test image
         run: |
@@ -223,6 +241,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # workflow_run: checkout the commit that triggered CI; direct trigger: use default ref
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
