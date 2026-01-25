@@ -181,6 +181,7 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: build
     permissions:
       contents: read
@@ -223,6 +224,7 @@ jobs:
 
       - name: Build and push Docker image to dev registry
         id: build-ci
+        timeout-minutes: 30
         uses: docker/build-push-action@v5
         with:
           context: .
