@@ -1,11 +1,11 @@
 name: CD
 on:
-  # Run CD after CI succeeds (best practice: quality gate)
+  # Run CD after Security Scanning completes successfully (sequential pipeline: CI → Security → CD)
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["Security Scanning"]
     types: [completed]
     branches: [master, main]
-  # Tags can trigger immediately (typically created after CI passes)
+  # Tags can trigger immediately (typically created after CI/Security passes)
   push:
     tags:
       - 'v*'
@@ -20,7 +20,7 @@ env:
 jobs:
   docker:
     runs-on: ubuntu-latest
-    # Only run if CI succeeded (workflow_run) or triggered by tag (push)
+    # Only run if Security succeeded (workflow_run) or triggered by tag (push)
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: read
