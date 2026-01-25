@@ -176,8 +176,10 @@ func (r *Registry) handleDebugReconciliation(args map[string]interface{}) (*mcp.
 
 	// Get related events
 	sb.WriteString("## Recent Events\n\n")
+	// Sanitize name to prevent injection in field selector
+	sanitizedName := sanitizeForLogging(name)
 	events, err := r.clients.Clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
-		FieldSelector: fmt.Sprintf("involvedObject.name=%s", name),
+		FieldSelector: fmt.Sprintf("involvedObject.name=%s", sanitizedName),
 	})
 
 	if err != nil {
