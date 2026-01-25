@@ -33,6 +33,7 @@ Complete CI/CD setup, best practices, and troubleshooting.
 - **[CI_CD_ARCHITECTURE.md](./03-CI_CD/CI_CD_ARCHITECTURE.md)** - Architectural design and decision rationale
 - **[CI_CD_BEST_PRACTICES.md](./03-CI_CD/CI_CD_BEST_PRACTICES.md)** - Best practices and patterns
 - **[CI_CD_CONSISTENCY.md](./03-CI_CD/CI_CD_CONSISTENCY.md)** - Consistency checklist across repos
+- **[GITHUB_RUNNERS.md](./03-CI_CD/GITHUB_RUNNERS.md)** - Understanding GitHub Runners (concept and usage)
 
 **Alignment & Verification:**
 - **[CI_CD_DIFFERENCES_ANALYSIS.md](./03-CI_CD/CI_CD_DIFFERENCES_ANALYSIS.md)** - Compare workflows between repos
