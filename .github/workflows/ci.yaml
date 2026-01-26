@@ -116,7 +116,7 @@ jobs:
         run: make build-a2a
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: binaries
           path: |
@@ -138,7 +138,7 @@ jobs:
         run: helm template dm-nkp-gitops-a2a-server chart/dm-nkp-gitops-a2a-server
 
       - name: Upload Helm chart artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: helm-chart
           path: chart/
@@ -249,7 +249,7 @@ jobs:
 
       - name: Upload Docker image metadata
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: docker-image-metadata
           path: |
